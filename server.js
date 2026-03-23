@@ -230,28 +230,56 @@ ${ffprobeHint}
   }
 });
 
-// === API: Rewrite ===
+// === API: Rewrite (板块级仿写) ===
 app.post('/api/rewrite', async (req, res) => {
   try {
     const { analysis, newCategory, productName, coreSellingPoints } = req.body;
     if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'OPENROUTER_API_KEY 未配置' });
     if (!analysis || !newCategory || !productName) return res.status(400).json({ error: '缺少参数' });
-    const sb = analysis.script_structure?.structure_breakdown || [], shots = analysis.shots || [];
-    const prompt = `你是TikTok带货短视频编导。基于以下爆款视频结构，为新产品改写视频脚本。
+    const sb = analysis.script_structure?.structure_breakdown || [];
+    const shots = analysis.shots || [];
+    const framework = analysis.script_structure?.framework || '未知';
+    const formula = analysis.script_structure?.formula || '未知';
 
-## 原始结构
-框架：${analysis.script_structure?.framework||'未知'}
-公式：${analysis.script_structure?.formula||'未知'}
-分段：
-${sb.map(b=>`[${b.element}] ${b.time_range||''}: ${b.description||''}`).join('\n')}
-镜头：
-${shots.map(s=>`#${s.shot_number} [${s.shot_type}] ${s.time_start}s-${s.time_end}s: ${s.scene_description||''}`).join('\n')}
+    const prompt = `你是TikTok带货短视频编导。基于以下爆款视频的结构分析，为新产品做板块级仿写。
 
-## 新产品
-品类：${newCategory}  名称：${productName}  卖点：${coreSellingPoints||'无'}
+## 原始视频结构
+框架类型：${framework}
+结构公式：${formula}
+各板块分析：
+${sb.map(b => `[${b.element}] ${b.time_range || ''}（${(b.shots_included || []).length}个镜头）: ${b.description || ''}`).join('\n')}
 
-输出严格JSON：
-{"rewritten_structure":[{"element":"停/病/药/信/买","shot_type":"镜头类型","scene_description_cn":"中文描述","scene_description_en":"English","voiceover_cn":"中文口播","voiceover_en":"English voiceover","text_overlay":"画面文字","shooting_notes":"拍摄建议"}],"hook_suggestion":"英文钩子","cta_suggestion":"英文CTA"}`;
+原始镜头列表（共${shots.length}个切镜）：
+${shots.map(s => `#${s.shot_number} [${s.shot_type}] ${s.time_start}s-${s.time_end}s: ${s.scene_description || ''}`).join('\n')}
+
+## 新产品信息
+品类：${newCategory}
+产品名称：${productName}
+核心卖点：${coreSellingPoints || '无'}
+
+## 任务
+请按原视频的停病药信买板块结构，为新产品写出每个板块的仿写方向。
+
+要求：
+1. 保持原视频的板块顺序和板块数量
+2. 每个板块只写概要方向（2-4句话），不要写具体的逐镜头脚本
+3. 概要方向要具体到画面，不要写空话。好的示例："快切三组镜头：孩子肚疼的痛苦表情→昂贵的医疗账单特写→妈妈彻夜陪床疲惫的脸"
+4. 全部用中文输出，不要英文
+5. 标注每个板块对应原视频的哪几个镜头编号
+
+输出严格JSON格式：
+{
+  "framework": "${framework}",
+  "formula": "${formula}",
+  "blocks": [
+    {
+      "element": "停",
+      "original_shots": [1, 2],
+      "original_description": "原视频这个板块做了什么",
+      "rewrite_direction": "新产品这个板块的仿写方向（2-4句话，要具体到画面）"
+    }
+  ]
+}`;
 
     const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENROUTER_API_KEY}`, 'HTTP-Referer': 'https://tiktok-analyzer.zeabur.app', 'X-Title': 'TikTok Analyzer' },
@@ -262,6 +290,60 @@ ${shots.map(s=>`#${s.shot_number} [${s.shot_type}] ${s.time_start}s-${s.time_end
     let rw; try { const m = content.match(/\{[\s\S]*\}/); rw = m ? JSON.parse(m[0]) : { raw_response: content }; } catch(e) { rw = { raw_response: content }; }
     res.json({ success: true, rewrite: rw });
   } catch (error) { console.error('改写失败:', error); res.status(500).json({ error: '改写失败: ' + error.message }); }
+});
+
+// === API: Expand (板块→镜头级脚本) ===
+app.post('/api/expand', async (req, res) => {
+  try {
+    const { originalShots, structureBreakdown, rewriteBlocks, productName, category } = req.body;
+    if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'OPENROUTER_API_KEY 未配置' });
+    if (!originalShots || !rewriteBlocks) return res.status(400).json({ error: '缺少参数' });
+
+    const prompt = `你是TikTok带货短视频编导。现在要把板块级仿写方向扩展为逐镜头分镜脚本。
+
+## 核心规则
+1. 新脚本的镜头数必须等于原视频的镜头数（${originalShots.length}个）
+2. 每个镜头的角色标签（停/病/药/信/买）必须跟原视频一致
+3. 每个镜头的时长比例参考原视频
+4. 只替换画面内容，结构和节奏完全复刻
+
+## 原视频镜头（${originalShots.length}个切镜）
+${originalShots.map(s => `#${s.shot_number} [角色:${s._role || '无'}] [类型:${s.shot_type}] ${s.time_start}s-${s.time_end}s: ${s.scene_description || ''}`).join('\n')}
+
+## 各板块的仿写方向
+${rewriteBlocks.map(b => `[${b.element}]（对应原视频镜头 ${(b.original_shots || []).join(',')}）:\n${b.rewrite_direction}`).join('\n\n')}
+
+## 新产品
+品类：${category || ''}
+产品名称：${productName || ''}
+
+## 任务
+把仿写方向扩展为${originalShots.length}个镜头的完整分镜脚本。每个镜头要有具体的画面描述和拍摄建议。
+
+全部用中文输出，输出严格JSON：
+{
+  "shots": [
+    {
+      "index": 1,
+      "role": "停/病/药/信/买",
+      "scene_description_cn": "具体画面描述（至少15字）",
+      "voiceover_cn": "口播文案（没有就空字符串）",
+      "text_overlay": "画面文字（没有就空字符串）",
+      "shooting_notes": "拍摄建议（景别、运镜等）",
+      "time_ref": "参考时长如0-1.5s"
+    }
+  ]
+}`;
+
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENROUTER_API_KEY}`, 'HTTP-Referer': 'https://tiktok-analyzer.zeabur.app', 'X-Title': 'TikTok Analyzer' },
+      body: JSON.stringify({ model: 'anthropic/claude-sonnet-4', max_tokens: 8192, messages: [{ role: 'user', content: prompt }] })
+    });
+    if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
+    const data = await r.json(), content = data.choices?.[0]?.message?.content || '';
+    let result; try { const m = content.match(/\{[\s\S]*\}/); result = m ? JSON.parse(m[0]) : { raw_response: content }; } catch(e) { result = { raw_response: content }; }
+    res.json({ success: true, expand: result });
+  } catch (error) { console.error('扩展失败:', error); res.status(500).json({ error: '扩展失败: ' + error.message }); }
 });
 
 // === API: Feishu Save ===

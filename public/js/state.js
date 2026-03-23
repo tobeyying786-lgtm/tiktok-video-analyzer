@@ -24,7 +24,7 @@ const AppState = {
     productImage: null,        // 白底图 base64
     productImageName: null,    // 文件名
     platform: 'tiktok',        // 发布平台
-    language: 'EN',            // 目标语言
+    language: 'CN',            // 目标语言
     layoutTemplate: 'tiktok_916', // 布局模板
   },
 
@@ -44,7 +44,7 @@ const AppState = {
     this.t4PollTimer = null;
     this.t4Initialized = false;
     this.t4Dirty = false;
-    this.t4Settings = { productImage: null, productImageName: null, platform: 'tiktok', language: 'EN', layoutTemplate: 'tiktok_916' };
+    this.t4Settings = { productImage: null, productImageName: null, platform: 'tiktok', language: 'CN', layoutTemplate: 'tiktok_916' };
     this.ffprobeData = null;
   },
 

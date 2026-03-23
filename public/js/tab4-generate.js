@@ -370,7 +370,9 @@ function t4UpdateRole(el) {
     AppState.t4RewriteData.rewritten_structure[idx].role = el.value;
     AppState.t4RewriteData.rewritten_structure[idx].element = el.value;
     AppState.t4Dirty = true;
-    t4RenderEditor();
+    // 只更新下拉框的颜色样式，不重新渲染整个编辑器
+    const cls = elemCls(el.value);
+    el.className = 't4-role-sel bg-' + cls;
   }
 }
 

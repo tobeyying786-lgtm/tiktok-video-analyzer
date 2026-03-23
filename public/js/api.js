@@ -74,6 +74,20 @@ const API = {
   },
 
   /**
+   * 板块→镜头级脚本扩展
+   */
+  async expand(originalShots, structureBreakdown, rewriteBlocks, productName, category) {
+    const resp = await fetch('/api/expand', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ originalShots, structureBreakdown, rewriteBlocks, productName, category })
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || '扩展失败');
+    return data.expand;
+  },
+
+  /**
    * 写入飞书多维表格
    */
   async saveToFeishu(analysis, videoCode, videoUrl, filename) {
