@@ -17,6 +17,16 @@ const AppState = {
   t4GenTaskKey: null,
   t4PollTimer: null,
   t4Initialized: false,
+  t4Dirty: false,
+
+  // Tab 4 全局设置
+  t4Settings: {
+    productImage: null,        // 白底图 base64
+    productImageName: null,    // 文件名
+    platform: 'tiktok',        // 发布平台
+    language: 'EN',            // 目标语言
+    layoutTemplate: 'tiktok_916', // 布局模板
+  },
 
   // ffmpeg 预分析数据（场景切换点、真实时长）
   ffprobeData: null,
@@ -33,14 +43,26 @@ const AppState = {
     if (this.t4PollTimer) clearInterval(this.t4PollTimer);
     this.t4PollTimer = null;
     this.t4Initialized = false;
+    this.t4Dirty = false;
+    this.t4Settings = { productImage: null, productImageName: null, platform: 'tiktok', language: 'EN', layoutTemplate: 'tiktok_916' };
     this.ffprobeData = null;
   },
 
   // Tab 4 初始化改写数据（只在首次或新改写时触发）
   initT4FromRewrite(rw) {
     this.lastRewrite = rw;
-    this.t4RewriteData = JSON.parse(JSON.stringify(rw));
+    // 将改写数据转换为新的 shots 格式（带 camera 和 role）
+    const converted = JSON.parse(JSON.stringify(rw));
+    if (converted.rewritten_structure) {
+      converted.rewritten_structure = converted.rewritten_structure.map(s => ({
+        ...s,
+        role: s.element || '无',
+        camera: s.camera || { shot_size: '', lighting: [], movement: '', composition: '', style: '' }
+      }));
+    }
+    this.t4RewriteData = converted;
     this.t4Initialized = true;
+    this.t4Dirty = false;
   }
 };
 
