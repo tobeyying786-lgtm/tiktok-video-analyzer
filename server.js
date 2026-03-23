@@ -21,7 +21,8 @@ const FEISHU_CONFIG = {
   tables: {
     competitor: 'tblZQnvqkli68JUa', finished: 'tblpGj9b6S7rXrgb', framework: 'tblWiW6wv7gCf3O4',
     cta: 'tblGYDkGG3vfOedI', painpoint: 'tblzWvaA9nAZBq2W', comment: 'tbldmzhJ7UQxF9g9',
-    sellingpt: 'tblUKBFDveaHCPYj', socialproof: 'tblSxNDEnz2Dz8yf', benefit: 'tblR4QQPyhRQm388', bgm: 'tblFqgaECRD1wfZn'
+    sellingpt: 'tblUKBFDveaHCPYj', socialproof: 'tblSxNDEnz2Dz8yf', benefit: 'tblR4QQPyhRQm388', bgm: 'tblFqgaECRD1wfZn',
+    scripts: 'tblcNi5sTHWPNHpO'
   }
 };
 
@@ -39,6 +40,51 @@ app.use('/frames', express.static(path.join(__dirname, 'frames')));
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 function getMimeType(f) { return { '.mp4':'video/mp4','.mov':'video/quicktime','.avi':'video/x-msvideo','.webm':'video/webm' }[path.extname(f).toLowerCase()] || 'video/mp4'; }
+
+/**
+ * ffmpeg 预分析：获取真实时长 + 场景切换时间点
+ * 用作 Gemini 的参考输入，提高时长和镜头数准确性
+ */
+function ffprobeAnalyze(videoPath) {
+  const result = { duration: null, sceneChanges: [], fps: null, resolution: null };
+  try {
+    // 1. 用 ffprobe 获取真实时长、fps、分辨率
+    const probeJson = execSync(
+      `ffprobe -v quiet -print_format json -show_format -show_streams "${videoPath}"`,
+      { timeout: 30000, stdio: 'pipe' }
+    ).toString();
+    const probe = JSON.parse(probeJson);
+    const fmt = probe.format || {};
+    result.duration = parseFloat(fmt.duration) || null;
+    const vs = (probe.streams || []).find(s => s.codec_type === 'video');
+    if (vs) {
+      result.resolution = `${vs.width}x${vs.height}`;
+      if (vs.r_frame_rate) {
+        const [num, den] = vs.r_frame_rate.split('/');
+        result.fps = den ? Math.round(parseInt(num) / parseInt(den)) : parseInt(num);
+      }
+    }
+  } catch (e) {
+    console.error('ffprobe 元数据获取失败:', e.message);
+  }
+  try {
+    // 2. 用 ffmpeg scene detect 获取场景切换时间点
+    // threshold=0.3 适合短视频快速剪辑风格
+    const sceneOutput = execSync(
+      `ffmpeg -i "${videoPath}" -filter:v "select='gt(scene,0.3)',showinfo" -f null - 2>&1 | grep showinfo | grep pts_time`,
+      { timeout: 60000, shell: true, stdio: 'pipe' }
+    ).toString();
+    const timeRegex = /pts_time:(\d+\.?\d*)/g;
+    let match;
+    while ((match = timeRegex.exec(sceneOutput)) !== null) {
+      result.sceneChanges.push(parseFloat(parseFloat(match[1]).toFixed(2)));
+    }
+  } catch (e) {
+    // scene detect 可能无输出（无场景切换），不算错误
+    console.log('ffmpeg scene detect: 无场景切换或命令失败');
+  }
+  return result;
+}
 
 function extractFrames(videoPath, videoId, timePoints) {
   const dir = path.join(__dirname, 'frames', videoId);
@@ -86,30 +132,65 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
     const send = (step, message, data = null) => { res.write(`data: ${JSON.stringify({ step, message, data })}\n\n`); };
 
     send(1, '📁 视频上传成功');
-    send(2, '🎬 ffmpeg 正在截取关键帧...');
-    send(3, '🔍 Gemini AI 正在分析视频结构...');
+
+    // ★ P0 修复：ffmpeg 预分析，获取真实时长 + 场景切换时间点
+    send(2, '🔍 ffmpeg 正在预分析视频元数据...');
+    const ffprobeData = ffprobeAnalyze(videoPath);
+    const realDuration = ffprobeData.duration;
+    const sceneChanges = ffprobeData.sceneChanges;
+    console.log('[ffprobe]', JSON.stringify(ffprobeData));
+
+    send(3, '🤖 Gemini AI 正在分析视频结构...');
 
     const videoBase64 = fs.readFileSync(videoPath).toString('base64');
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-    const prompt = `你是一个专业的TikTok带货短视频拆解分析师。请对这个视频进行逐帧拆解分析。
-请按以下JSON格式输出分析结果（严格JSON格式，不要有多余文字）：
+    // ★ P0 修复：增强 Gemini Prompt，注入 ffprobe 元数据 + 加强约束
+    const ffprobeHint = realDuration
+      ? `\n## ffmpeg 预分析数据（真实值，请严格遵守）\n- 视频真实总时长：${realDuration.toFixed(2)} 秒（你输出的 total_duration_seconds 必须等于此值）\n- 视频分辨率：${ffprobeData.resolution || '未知'}\n- 帧率：${ffprobeData.fps || '未知'} fps\n- ffmpeg 检测到的场景切换时间点（仅供参考，你需要根据实际内容微调）：${sceneChanges.length > 0 ? sceneChanges.join('s, ') + 's' : '未检测到明显场景切换'}\n`
+      : '';
+
+    const prompt = `你是一个专业的TikTok带货短视频拆解分析师。请对这个视频进行精确的逐镜头拆解分析。
+${ffprobeHint}
+## 关键约束（必须严格遵守）
+1. total_duration_seconds 必须等于 ffmpeg 检测到的真实时长（${realDuration ? realDuration.toFixed(2) : '请自行判断'}秒），不得偏差超过 0.5 秒
+2. 所有镜头的 time_start/time_end 必须是精确数字（不是字符串），最后一个镜头的 time_end 必须等于视频总时长
+3. 镜头之间不允许有时间空隙或重叠：第 N+1 个镜头的 time_start 必须等于第 N 个镜头的 time_end
+4. 每个镜头都必须同样详细地描述，后半段镜头的描述不得比前半段简略——越到后面越重要（结尾促单、CTA、信任建设等往往在后半段）
+5. product_first_appear_seconds 必须精确到秒，如果产品从未出现则填 null（不要留空字符串）
+
+## 框架判定规则（10种框架 MECE 判定，基于结构顺序而非内容）
+- 经典痛点型：先展示痛点场景，再引出产品作为解决方案 → 停→病→药→信→买
+- 效果前置型：开头直接展示产品效果/结果，再回头讲痛点 → 药→停→病→药→信→买
+- 对比碾压型：核心有明确的 A vs B 对比环节 → 停→A vs B→药→信→买
+- 多场景轰炸型：展示产品在多个不同场景下使用 → 停→药→场景1→场景2→场景3→买
+- 开箱种草型：以拆箱/拆包为主线 → 停(拆箱)→药→药→信→买
+- 好奇悬念型：开头制造好奇/悬念留人 → 停(好奇)→病→药→信→买
+- 社交证明型：开头展示他人反应/评价 → 停(他人反应)→药→病→信→买
+- 科普权威型：以知识/科普切入 → 停(知识钩子)→病→药→信→买
+- 真实体验型：以真实使用场景/日常开始 → 停(真实场景)→病→药→信→买
+- 剧情反转型：有明确剧情冲突和反转 → 停(冲突)→病→反转→药→买
+
+判定时看的是「结构顺序」（痛点先还是效果先、有没有对比环节、有没有多场景等），不是看内容品类。
+
+## 输出格式（严格 JSON，不要有多余文字）
 {
-  "video_overview": { "total_duration_seconds": 秒数, "total_shots": 数量, "product_first_appear_seconds": 秒数, "product_exposure_seconds": 秒数, "product_exposure_ratio": 百分比数字 },
-  "shots": [{ "shot_number": 编号, "time_start": 秒数, "time_end": 秒数, "shot_type": "痛点放大/产品展示/使用场景/细节特写/效果对比/行动引导/开箱展示/社交证明/情绪渲染", "scene_description": "中文画面描述", "text_overlay": "画面文字", "voiceover": "口播内容", "product_visible": true或false }],
-  "script_structure": { "framework": "经典痛点型/效果前置型/对比碾压型/多场景轰炸型/开箱种草型/好奇悬念型/社交证明型/科普权威型/真实体验型/剧情反转型", "formula": "如：停→病→药→信→买", "hook_type": "钩子类型", "structure_breakdown": [{ "element": "停/病/药/信/买", "time_range": "时间段", "description": "做了什么", "shots_included": [编号] }] },
+  "video_overview": { "total_duration_seconds": 数字, "total_shots": 数字, "product_first_appear_seconds": 数字或null, "product_exposure_seconds": 数字, "product_exposure_ratio": 百分比数字 },
+  "shots": [{ "shot_number": 数字, "time_start": 数字, "time_end": 数字, "shot_type": "痛点放大/产品展示/使用场景/细节特写/效果对比/行动引导/开箱展示/社交证明/情绪渲染", "scene_description": "详细中文画面描述（至少20字）", "text_overlay": "画面文字（没有则空字符串）", "voiceover": "口播内容（没有则空字符串）", "product_visible": true或false }],
+  "script_structure": { "framework": "10种框架之一", "formula": "如：停→病→药→信→买", "hook_type": "钩子类型", "structure_breakdown": [{ "element": "停/病/药/信/买", "time_range": "0.0-3.2s", "description": "具体做了什么", "shots_included": [编号数组] }] },
   "extracted_materials": {
-    "hook_scripts": [{"text":"原文","type":"开头/中间/结尾","action_type":"类型"}],
+    "hook_scripts": [{"text":"原文","type":"开头/中间/结尾","action_type":"痛点共鸣/提问触发/结果前置/反常识/数字可信/场景代入"}],
     "pain_points": [{"scene":"场景","user_pain":"痛点","emotion_keywords":["词"],"product_solution":"方案"}],
-    "selling_points": [{"description":"卖点","visual_type":"画面类型","shooting_notes":"拍摄说明"}],
-    "social_proof": [{"type":"类型","content":"内容"}],
+    "selling_points": [{"description":"卖点","visual_type":"前后对比/极限测试/细节放大/真实反应/场景演示/穿脱演示/开箱展示/认证展示","shooting_notes":"拍摄说明"}],
+    "social_proof": [{"type":"用户好评/网红背书/权威认证/销量数据","content":"内容"}],
     "cta_scripts": [{"text":"原文","type":"结尾促单","incentive":"权益"}],
-    "bgm": {"mood":"情绪类型","description":"风格描述"}
+    "bgm": {"mood":"紧张推进型/爽感共鸣型/轻松治愈型/流行趋势音","description":"风格描述"}
   },
-  "reusable_points": "可复用亮点",
-  "optimization_suggestions": "优化建议"
+  "reusable_points": "可复用亮点（至少3点）",
+  "optimization_suggestions": "优化建议（至少2点）"
 }
-要求：time_start和time_end必须是纯数字。`;
+
+重要：time_start 和 time_end 必须是纯数字（不带s后缀，不是字符串）。请先确定总时长和所有镜头切换点，再逐个填写每个镜头的详细信息。`;
 
     const result = await model.generateContent([ { text: prompt }, { inlineData: { mimeType: getMimeType(req.file.originalname), data: videoBase64 } } ]);
     const responseText = result.response.text();
@@ -118,6 +199,20 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
     let analysisResult;
     try { const m = responseText.match(/\{[\s\S]*\}/); analysisResult = m ? JSON.parse(m[0]) : { raw_response: responseText, parse_error: true }; }
     catch(e) { console.error('JSON解析失败:', e.message); analysisResult = { raw_response: responseText, parse_error: true }; }
+
+    // ★ P0 修复：后处理校验 — 如果 Gemini 返回的时长偏差超过 1 秒，用 ffprobe 真实值覆盖
+    if (analysisResult.video_overview && realDuration) {
+      const aiDuration = analysisResult.video_overview.total_duration_seconds;
+      if (!aiDuration || Math.abs(aiDuration - realDuration) > 1) {
+        console.log(`[修正] AI时长 ${aiDuration}s → ffprobe真实时长 ${realDuration.toFixed(2)}s`);
+        analysisResult.video_overview.total_duration_seconds = parseFloat(realDuration.toFixed(2));
+      }
+    }
+
+    // 附带 ffprobe 数据供前端参考
+    if (!analysisResult.parse_error) {
+      analysisResult._ffprobe = ffprobeData;
+    }
 
     send(5, '📸 根据镜头时间点截帧...');
     if (analysisResult.shots && analysisResult.shots.length > 0) {
