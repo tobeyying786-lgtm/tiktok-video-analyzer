@@ -138,15 +138,17 @@ function renderRewriteBlocks(rw) {
 }
 
 function t3UpdateBlock(idx, value) {
-  if (AppState.lastRewrite && AppState.lastRewrite.blocks && AppState.lastRewrite.blocks[idx]) {
-    AppState.lastRewrite.blocks[idx].rewrite_direction = value;
+  // 更新板块数据（可能在 _rewriteBlocks 或 lastRewrite 中）
+  const rw = AppState._rewriteBlocks || AppState.lastRewrite;
+  if (rw && rw.blocks && rw.blocks[idx]) {
+    rw.blocks[idx].rewrite_direction = value;
   }
 }
 
 // ============== 板块→镜头级脚本扩展 ==============
 
 async function doExpand() {
-  const rw = AppState.lastRewrite;
+  const rw = AppState._rewriteBlocks || AppState.lastRewrite;
   if (!rw || !rw.blocks) return showErr('请先完成板块仿写');
 
   const btn = document.getElementById('btn-expand');
@@ -181,7 +183,7 @@ async function doExpand() {
       return;
     }
 
-    // 把 expand 结果传给 Tab 4
+    // 把 expand 结果传给 Tab 4（不覆盖板块数据）
     const expandData = {
       rewritten_structure: (result.shots || []).map(s => ({
         ...s,
@@ -192,11 +194,14 @@ async function doExpand() {
       formula: rw.formula || ''
     };
 
+    // 板块数据保留在 _rewriteBlocks，expand 结果存到 lastRewrite 给 Tab 4 用
+    AppState._rewriteBlocks = rw;
     AppState.lastRewrite = expandData;
     AppState.t4Initialized = false;
 
     status.innerHTML = '<div style="color:var(--green);padding:12px;text-align:center">✅ 已生成 ' + (result.shots || []).length + ' 个镜头的分镜脚本，切换到 Tab 4 查看编辑</div>';
-    btn.textContent = '✅ 已生成';
+    btn.disabled = false;
+    btn.textContent = '🔄 重新生成分镜脚本';
 
     // 高亮 Tab 4
     const t4Tab = document.querySelector('[data-tab="t4"]');
