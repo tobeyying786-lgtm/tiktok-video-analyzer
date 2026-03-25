@@ -106,16 +106,36 @@ async function doRewrite() {
 }
 
 function renderRewriteBlocks(rw) {
-  // 存到全局状态
-  AppState.lastRewrite = rw;
-  AppState.t4Initialized = false;
-
   const re = document.getElementById('rw-result');
 
+  // 如果后端返回了 raw_response，前端再试一次解析
+  if (rw.raw_response) {
+    try {
+      const cleaned = rw.raw_response.replace(/`{3,}[\w]*\s*/g, '').trim();
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      if (start !== -1 && end > start) {
+        const parsed = JSON.parse(cleaned.substring(start, end + 1));
+        if (parsed.blocks) {
+          console.log('[前端补救] JSON解析成功');
+          rw = parsed;
+        }
+      }
+    } catch (e) {
+      console.error('[前端补救] 也失败了:', e.message);
+    }
+  }
+
+  // 如果还是 raw_response，显示原文
   if (rw.raw_response) {
     re.innerHTML = '<div style="background:var(--bg3);border-radius:var(--r);padding:16px;margin-top:16px;font-size:13px;color:var(--text2);white-space:pre-wrap;line-height:1.8">' + esc(rw.raw_response) + '</div>';
     return;
   }
+
+  // 存到全局状态
+  AppState.lastRewrite = rw;
+  AppState._rewriteBlocks = rw;
+  AppState.t4Initialized = false;
 
   const blocks = rw.blocks || [];
   if (blocks.length === 0) {
