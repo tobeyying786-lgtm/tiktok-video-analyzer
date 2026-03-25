@@ -42,6 +42,12 @@ function renderTab3(a, ss, shots) {
   const filename = AppState.curFile ? AppState.curFile.name.replace(/\.[^.]+$/, '') : '';
   const framework = ss.framework || '未识别';
   const formula = ss.formula || '';
+  const isNewFramework = framework === '新框架';
+
+  // 入库按钮（仅新框架显示）
+  const saveFrameworkBtn = isNewFramework
+    ? ' <button class="btn-sm" style="padding:4px 12px;background:var(--orangeBg);border-color:var(--orange);color:var(--orange)" id="btn-save-framework" onclick="saveNewFramework()">+ 入框架库</button>'
+    : '';
 
   document.getElementById('t3').innerHTML =
     '<div class="str-layout">' +
@@ -50,6 +56,7 @@ function renderTab3(a, ss, shots) {
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">' +
           '<span style="background:var(--accentBg);border:1px solid var(--accent);border-radius:8px;padding:4px 14px;font-size:13px;font-weight:700;color:var(--accent2)">' + esc(framework) + '</span>' +
           '<span style="font-size:13px;color:var(--text3);font-family:JetBrains Mono,monospace">' + esc(formula) + '</span>' +
+          saveFrameworkBtn +
           '<span style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:3px 12px;font-size:12px;color:var(--text3)">' + filename + '</span>' +
         '</div>' +
         blocks +
@@ -216,6 +223,37 @@ async function doExpand() {
   }
 }
 
+// ============== 新框架入库 ==============
+
+async function saveNewFramework() {
+  const analysis = AppState.analysisData?.analysis || AppState.analysisData;
+  const ss = analysis?.script_structure || {};
+  const formula = ss.formula || '';
+  const hookType = ss.hook_type || '';
+
+  // 弹窗让用户命名
+  const name = prompt('给这个新框架起个名字：', '');
+  if (!name) return;
+
+  const logic = (ss.structure_breakdown || []).map(b => `[${b.element}] ${b.description || ''}`).join('；');
+
+  const btn = document.getElementById('btn-save-framework');
+  btn.disabled = true;
+  btn.textContent = '入库中…';
+
+  try {
+    await API.createFramework(name, formula, hookType, logic);
+    btn.textContent = '✅ 已入库';
+    btn.style.background = 'var(--greenBg)';
+    btn.style.borderColor = 'var(--green)';
+    btn.style.color = 'var(--green)';
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '+ 入框架库';
+    showErr('框架入库失败: ' + e.message);
+  }
+}
+
 // ============== 导出 ==============
 
 window.renderTab3 = renderTab3;
@@ -223,3 +261,4 @@ window.doRewrite = doRewrite;
 window.renderRewriteBlocks = renderRewriteBlocks;
 window.t3UpdateBlock = t3UpdateBlock;
 window.doExpand = doExpand;
+window.saveNewFramework = saveNewFramework;

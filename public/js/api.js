@@ -143,6 +143,30 @@ const API = {
   },
 
   /**
+   * 获取框架结构库
+   */
+  async getFrameworks() {
+    const resp = await fetch('/api/feishu/frameworks');
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || '框架库加载失败');
+    return data.frameworks;
+  },
+
+  /**
+   * 新框架入库
+   */
+  async createFramework(name, formula, hookType, logic) {
+    const resp = await fetch('/api/feishu/framework/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, formula, hookType, logic })
+    });
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || '入库失败');
+    return data;
+  },
+
+  /**
    * 健康检查
    */
   async healthCheck() {

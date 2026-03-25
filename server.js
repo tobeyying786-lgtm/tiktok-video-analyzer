@@ -142,6 +142,46 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
 
     send(3, '🤖 Gemini AI 正在分析视频结构...');
 
+    // ★ 动态读取飞书框架库
+    let frameworkList = [];
+    try {
+      if (FEISHU_APP_ID && FEISHU_APP_SECRET) {
+        // 复用缓存逻辑
+        if (frameworkCache.data && Date.now() < frameworkCache.expires) {
+          frameworkList = frameworkCache.data;
+        } else {
+          const fdata = await feishuList(FEISHU_CONFIG.tables.framework, { page_size: 100 });
+          frameworkList = (fdata.items || []).map(r => ({
+            name: r.fields['框架名称'] || '',
+            formula: r.fields['短视频底层结构公式‼️'] || r.fields['短视频底层结构公式'] || '',
+            hookType: r.fields['开头钩子类型'] || '',
+            logic: r.fields['核心逻辑'] || ''
+          })).filter(i => i.name);
+          frameworkCache = { data: frameworkList, expires: Date.now() + 300000 };
+        }
+      }
+    } catch (e) {
+      console.error('框架库读取失败，使用空列表:', e.message);
+    }
+
+    // 动态生成框架判定规则
+    const frameworkRules = frameworkList.length > 0
+      ? frameworkList.map(f => `- ${f.name}：${f.logic ? f.logic.substring(0, 100) : ''} → ${f.formula}`).join('\n')
+      : `- 经典痛点型：先展示痛点场景，再引出产品作为解决方案 → 停→病→药→信→买
+- 效果前置型：开头直接展示产品效果/结果，再回头讲痛点 → 药→停→病→药→信→买
+- 对比碾压型：核心有明确的 A vs B 对比环节 → 停→A vs B→药→信→买
+- 多场景轰炸型：展示产品在多个不同场景下使用 → 停→药→场景1→场景2→场景3→买
+- 开箱种草型：以拆箱/拆包为主线 → 停(拆箱)→药→药→信→买
+- 好奇悬念型：开头制造好奇/悬念留人 → 停(好奇)→病→药→信→买
+- 社交证明型：开头展示他人反应/评价 → 停(他人反应)→药→病→信→买
+- 科普权威型：以知识/科普切入 → 停(知识钩子)→病→药→信→买
+- 真实体验型：以真实使用场景/日常开始 → 停(真实场景)→病→药→信→买
+- 剧情反转型：有明确剧情冲突和反转 → 停(冲突)→病→反转→药→买`;
+
+    const frameworkNames = frameworkList.length > 0
+      ? frameworkList.map(f => f.name).join('/')
+      : '经典痛点型/效果前置型/对比碾压型/多场景轰炸型/开箱种草型/好奇悬念型/社交证明型/科普权威型/真实体验型/剧情反转型';
+
     const videoBase64 = fs.readFileSync(videoPath).toString('base64');
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
@@ -159,25 +199,18 @@ ${ffprobeHint}
 4. 每个镜头都必须同样详细地描述，后半段镜头的描述不得比前半段简略——越到后面越重要（结尾促单、CTA、信任建设等往往在后半段）
 5. product_first_appear_seconds 必须精确到秒，如果产品从未出现则填 null（不要留空字符串）
 
-## 框架判定规则（10种框架 MECE 判定，基于结构顺序而非内容）
-- 经典痛点型：先展示痛点场景，再引出产品作为解决方案 → 停→病→药→信→买
-- 效果前置型：开头直接展示产品效果/结果，再回头讲痛点 → 药→停→病→药→信→买
-- 对比碾压型：核心有明确的 A vs B 对比环节 → 停→A vs B→药→信→买
-- 多场景轰炸型：展示产品在多个不同场景下使用 → 停→药→场景1→场景2→场景3→买
-- 开箱种草型：以拆箱/拆包为主线 → 停(拆箱)→药→药→信→买
-- 好奇悬念型：开头制造好奇/悬念留人 → 停(好奇)→病→药→信→买
-- 社交证明型：开头展示他人反应/评价 → 停(他人反应)→药→病→信→买
-- 科普权威型：以知识/科普切入 → 停(知识钩子)→病→药→信→买
-- 真实体验型：以真实使用场景/日常开始 → 停(真实场景)→病→药→信→买
-- 剧情反转型：有明确剧情冲突和反转 → 停(冲突)→病→反转→药→买
+## 框架判定规则（基于结构顺序而非内容，从飞书框架库动态加载）
+${frameworkRules}
 
-判定时看的是「结构顺序」（痛点先还是效果先、有没有对比环节、有没有多场景等），不是看内容品类。
+判定时看的是「结构顺序」（停病药信买的出现顺序），不是看内容品类。
+如果视频结构不完全匹配上述任何框架但属于某种框架的分型（如停→病→病→病→药→信→买仍然是经典痛点型），则归入该框架。
+如果确实是全新的结构组合，framework 字段填"新框架"，并在 formula 中写出实际的结构公式。
 
 ## 输出格式（严格 JSON，不要有多余文字）
 {
   "video_overview": { "total_duration_seconds": 数字, "total_shots": 数字, "product_first_appear_seconds": 数字或null, "product_exposure_seconds": 数字, "product_exposure_ratio": 百分比数字 },
   "shots": [{ "shot_number": 数字, "time_start": 数字, "time_end": 数字, "shot_type": "痛点放大/产品展示/使用场景/细节特写/效果对比/行动引导/开箱展示/社交证明/情绪渲染", "scene_description": "详细中文画面描述（至少20字）", "text_overlay": "画面文字（没有则空字符串）", "voiceover": "口播内容（没有则空字符串）", "product_visible": true或false }],
-  "script_structure": { "framework": "10种框架之一", "formula": "如：停→病→药→信→买", "hook_type": "钩子类型", "structure_breakdown": [{ "element": "停/病/药/信/买", "time_range": "0.0-3.2s", "description": "具体做了什么", "shots_included": [编号数组] }] },
+  "script_structure": { "framework": "${frameworkNames}/新框架", "formula": "如：停→病→药→信→买", "hook_type": "钩子类型", "structure_breakdown": [{ "element": "停/病/药/信/买", "time_range": "0.0-3.2s", "description": "具体做了什么", "shots_included": [编号数组] }] },
   "extracted_materials": {
     "hook_scripts": [{"text":"原文","type":"开头/中间/结尾","action_type":"痛点共鸣/提问触发/结果前置/反常识/数字可信/场景代入"}],
     "pain_points": [{"scene":"场景","user_pain":"痛点","emotion_keywords":["词"],"product_solution":"方案"}],
@@ -461,6 +494,47 @@ app.get('/api/feishu/bgm', async (req, res) => {
     })).filter(i => i.name);
     res.json({ success: true, bgm: items });
   } catch (e) { console.error('BGM读取失败:', e); res.status(500).json({ error: e.message }); }
+});
+
+// === API: 读取飞书框架结构库 ===
+let frameworkCache = { data: null, expires: 0 };
+app.get('/api/feishu/frameworks', async (req, res) => {
+  try {
+    if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) return res.status(500).json({ error: '飞书未配置' });
+    // 缓存 5 分钟
+    if (frameworkCache.data && Date.now() < frameworkCache.expires) {
+      return res.json({ success: true, frameworks: frameworkCache.data });
+    }
+    const data = await feishuList(FEISHU_CONFIG.tables.framework, { page_size: 100 });
+    const items = (data.items || []).map(r => ({
+      name: r.fields['框架名称'] || '',
+      formula: r.fields['短视频底层结构公式‼️'] || r.fields['短视频底层结构公式'] || '',
+      hookType: r.fields['开头钩子类型'] || '',
+      logic: r.fields['核心逻辑'] || '',
+      difficulty: r.fields['难度'] || '',
+      level: r.fields['内容层级'] || ''
+    })).filter(i => i.name);
+    frameworkCache = { data: items, expires: Date.now() + 300000 };
+    res.json({ success: true, frameworks: items });
+  } catch (e) { console.error('框架库读取失败:', e); res.status(500).json({ error: e.message }); }
+});
+
+// === API: 新框架入库 ===
+app.post('/api/feishu/framework/create', async (req, res) => {
+  try {
+    if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) return res.status(500).json({ error: '飞书未配置' });
+    const { name, formula, hookType, logic } = req.body;
+    if (!name || !formula) return res.status(400).json({ error: '缺少框架名称或公式' });
+    const record = await feishuCreate(FEISHU_CONFIG.tables.framework, {
+      '框架名称': name,
+      '短视频底层结构公式‼️': formula,
+      '开头钩子类型': hookType || '',
+      '核心逻辑': logic || ''
+    });
+    // 清除缓存
+    frameworkCache = { data: null, expires: 0 };
+    res.json({ success: true, record });
+  } catch (e) { console.error('框架入库失败:', e); res.status(500).json({ error: e.message }); }
 });
 
 // === API: Video Generation Platforms ===
