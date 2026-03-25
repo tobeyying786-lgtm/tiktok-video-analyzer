@@ -209,6 +209,16 @@ ${ffprobeHint}
       }
     }
 
+    // ★ 修复：产品露出占比 — 不信 AI 的百分比，用已有数据自己算
+    if (analysisResult.video_overview) {
+      const ov = analysisResult.video_overview;
+      const dur = ov.total_duration_seconds;
+      const exp = ov.product_exposure_seconds;
+      if (dur > 0 && typeof exp === 'number') {
+        ov.product_exposure_ratio = parseFloat((exp / dur * 100).toFixed(1));
+      }
+    }
+
     // 附带 ffprobe 数据供前端参考
     if (!analysisResult.parse_error) {
       analysisResult._ffprobe = ffprobeData;
@@ -287,7 +297,9 @@ ${shots.map(s => `#${s.shot_number} [${s.shot_type}] ${s.time_start}s-${s.time_e
     });
     if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
     const data = await r.json(), content = data.choices?.[0]?.message?.content || '';
-    let rw; try { const m = content.match(/\{[\s\S]*\}/); rw = m ? JSON.parse(m[0]) : { raw_response: content }; } catch(e) { rw = { raw_response: content }; }
+    // 去掉 markdown 代码块包裹再解析 JSON
+    const cleaned = content.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+    let rw; try { const m = cleaned.match(/\{[\s\S]*\}/); rw = m ? JSON.parse(m[0]) : { raw_response: content }; } catch(e) { console.error('rewrite JSON解析失败:', e.message); rw = { raw_response: content }; }
     res.json({ success: true, rewrite: rw });
   } catch (error) { console.error('改写失败:', error); res.status(500).json({ error: '改写失败: ' + error.message }); }
 });
@@ -341,7 +353,8 @@ ${rewriteBlocks.map(b => `[${b.element}]（对应原视频镜头 ${(b.original_s
     });
     if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
     const data = await r.json(), content = data.choices?.[0]?.message?.content || '';
-    let result; try { const m = content.match(/\{[\s\S]*\}/); result = m ? JSON.parse(m[0]) : { raw_response: content }; } catch(e) { result = { raw_response: content }; }
+    const cleaned = content.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+    let result; try { const m = cleaned.match(/\{[\s\S]*\}/); result = m ? JSON.parse(m[0]) : { raw_response: content }; } catch(e) { console.error('expand JSON解析失败:', e.message); result = { raw_response: content }; }
     res.json({ success: true, expand: result });
   } catch (error) { console.error('扩展失败:', error); res.status(500).json({ error: '扩展失败: ' + error.message }); }
 });
