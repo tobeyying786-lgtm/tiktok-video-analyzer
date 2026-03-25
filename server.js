@@ -297,9 +297,22 @@ ${shots.map(s => `#${s.shot_number} [${s.shot_type}] ${s.time_start}s-${s.time_e
     });
     if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
     const data = await r.json(), content = data.choices?.[0]?.message?.content || '';
-    // 去掉 markdown 代码块包裹再解析 JSON
-    const cleaned = content.replace(/```json\s*/g, '').replace(/```\s*/g, '');
-    let rw; try { const m = cleaned.match(/\{[\s\S]*\}/); rw = m ? JSON.parse(m[0]) : { raw_response: content }; } catch(e) { console.error('rewrite JSON解析失败:', e.message); rw = { raw_response: content }; }
+    // 暴力清理：去掉所有 markdown 代码块标记
+    const cleaned = content.replace(/`{3,}[\w]*\s*/g, '').trim();
+    let rw;
+    try {
+      // 找到第一个 { 和最后一个 } 之间的内容
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      if (start !== -1 && end > start) {
+        rw = JSON.parse(cleaned.substring(start, end + 1));
+      } else {
+        rw = { raw_response: content };
+      }
+    } catch(e) {
+      console.error('rewrite JSON解析失败:', e.message, '\n原始内容前200字:', content.substring(0, 200));
+      rw = { raw_response: content };
+    }
     res.json({ success: true, rewrite: rw });
   } catch (error) { console.error('改写失败:', error); res.status(500).json({ error: '改写失败: ' + error.message }); }
 });
@@ -353,8 +366,20 @@ ${rewriteBlocks.map(b => `[${b.element}]（对应原视频镜头 ${(b.original_s
     });
     if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
     const data = await r.json(), content = data.choices?.[0]?.message?.content || '';
-    const cleaned = content.replace(/```json\s*/g, '').replace(/```\s*/g, '');
-    let result; try { const m = cleaned.match(/\{[\s\S]*\}/); result = m ? JSON.parse(m[0]) : { raw_response: content }; } catch(e) { console.error('expand JSON解析失败:', e.message); result = { raw_response: content }; }
+    const cleaned = content.replace(/`{3,}[\w]*\s*/g, '').trim();
+    let result;
+    try {
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      if (start !== -1 && end > start) {
+        result = JSON.parse(cleaned.substring(start, end + 1));
+      } else {
+        result = { raw_response: content };
+      }
+    } catch(e) {
+      console.error('expand JSON解析失败:', e.message, '\n原始内容前200字:', content.substring(0, 200));
+      result = { raw_response: content };
+    }
     res.json({ success: true, expand: result });
   } catch (error) { console.error('扩展失败:', error); res.status(500).json({ error: '扩展失败: ' + error.message }); }
 });
