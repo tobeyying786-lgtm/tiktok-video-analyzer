@@ -128,6 +128,7 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: '请上传视频文件' });
     const videoPath = req.file.path, videoId = path.basename(videoPath, path.extname(videoPath));
+    const userMemo = req.body.memo || '';
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
     const send = (step, message, data = null) => { res.write(`data: ${JSON.stringify({ step, message, data })}\n\n`); };
 
@@ -190,8 +191,12 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
       ? `\n## ffmpeg 预分析数据（真实值，请严格遵守）\n- 视频真实总时长：${realDuration.toFixed(2)} 秒（你输出的 total_duration_seconds 必须等于此值）\n- 视频分辨率：${ffprobeData.resolution || '未知'}\n- 帧率：${ffprobeData.fps || '未知'} fps\n- ffmpeg 检测到的场景切换时间点（仅供参考，你需要根据实际内容微调）：${sceneChanges.length > 0 ? sceneChanges.join('s, ') + 's' : '未检测到明显场景切换'}\n`
       : '';
 
+    const memoHint = userMemo
+      ? `\n## 用户入库备注（在分析和素材提取时重点关注，但不要忽略其他部分）\n${userMemo}\n`
+      : '';
+
     const prompt = `你是一个专业的TikTok带货短视频拆解分析师。请对这个视频进行精确的逐镜头拆解分析。
-${ffprobeHint}
+${ffprobeHint}${memoHint}
 ## 关键约束（必须严格遵守）
 1. total_duration_seconds 必须等于 ffmpeg 检测到的真实时长（${realDuration ? realDuration.toFixed(2) : '请自行判断'}秒），不得偏差超过 0.5 秒
 2. 所有镜头的 time_start/time_end 必须是精确数字（不是字符串），最后一个镜头的 time_end 必须等于视频总时长

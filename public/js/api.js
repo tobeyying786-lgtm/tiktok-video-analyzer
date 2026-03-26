@@ -6,13 +6,15 @@ const API = {
   /**
    * 分析视频（SSE 流式）
    * @param {File} file
+   * @param {string} memo - 入库备注（可选）
    * @param {Function} onStep  - (step, message) 回调
    * @param {Function} onDone  - (data) 回调
    * @param {Function} onError - (error) 回调
    */
-  async analyze(file, onStep, onDone, onError) {
+  async analyze(file, memo, onStep, onDone, onError) {
     const fd = new FormData();
     fd.append('video', file);
+    if (memo) fd.append('memo', memo);
     try {
       const resp = await fetch('/api/analyze', { method: 'POST', body: fd });
       if (!resp.ok && !resp.headers.get('content-type')?.includes('event-stream')) {

@@ -107,8 +107,14 @@ async function startAnalysis() {
   document.getElementById('btn-go').disabled = true;
   showProg();
 
+  // 读取入库备注
+  const memoEl = document.getElementById('analyze-memo');
+  const memo = memoEl ? memoEl.value.trim() : '';
+  AppState._analyzeMemo = memo;
+
   await API.analyze(
     AppState.curFile,
+    memo,
     // onStep
     (step, message) => onSSE({ step, message }),
     // onDone
@@ -272,11 +278,11 @@ function saveToFeishu() {
 function renderSavePanel(suggestions) {
   const panel = document.getElementById('save-panel');
 
-  // 备注输入（顶部）
-  const memoHtml = '<div style="margin-bottom:16px">' +
-    '<label style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px;font-weight:600">💡 入库备注（可选，帮助 AI 重点关注你注意到的亮点）</label>' +
-    '<input type="text" id="save-memo" placeholder="比如：开头的停特别好，水果大特写像溃烂皮肤，骗过了眼睛又绕开了平台审查" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:14px;color:var(--text);font-family:inherit">' +
-  '</div>';
+  // 备注提示（显示分析时填的备注）
+  const memo = AppState._analyzeMemo || '';
+  const memoHtml = memo
+    ? '<div style="background:var(--accentBg);border:1px solid rgba(58,176,158,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--accent2)">💡 分析时的入库备注：' + esc(memo) + '</div>'
+    : '';
 
   // 竞品拆解库提示（自动入库，不可取消）
   const autoSaveHtml = '<div style="background:var(--pinkBg);border:1px solid rgba(236,72,153,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--pink)">' +
@@ -364,7 +370,7 @@ function saveAddLib() {
 
 async function saveConfirm() {
   const selected = AppState._saveSuggestions.filter(s => s.checked);
-  const memo = (document.getElementById('save-memo') || {}).value || '';
+  const memo = AppState._analyzeMemo || '';
 
   const btn = document.getElementById('btn-save-confirm');
   const status = document.getElementById('save-status');
