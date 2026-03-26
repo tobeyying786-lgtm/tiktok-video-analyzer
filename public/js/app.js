@@ -1,5 +1,6 @@
 /**
  * app.js — 主逻辑：上传流程、Tab 切换、工具函数、结果渲染
+ * V3.5.3: 入库面板适配新 extracted_materials 结构
  */
 
 // ============== 工具函数 ==============
@@ -43,7 +44,6 @@ function showErr(m) { document.getElementById('errMsg').textContent = m; documen
 function hideErr() { document.getElementById('errBox').classList.remove('on'); }
 function openLB(src) { document.getElementById('lb-img').src = src; document.getElementById('lb').classList.add('on'); }
 
-// 导出工具函数到全局
 window.esc = esc;
 window.shotCls = shotCls;
 window.elemCls = elemCls;
@@ -77,7 +77,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ESC 关闭 lightbox
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') document.getElementById('lb').classList.remove('on');
   });
@@ -90,7 +89,6 @@ function showSel() {
     '<div style="font-size:16px;font-weight:600;color:var(--accent2)">' + esc(AppState.curFile.name) + '</div>' +
     '<div style="font-size:13px;color:var(--text3)">' + (AppState.curFile.size / 1048576).toFixed(1) + ' MB</div>' +
   '</div><input type="file" id="fileIn" accept="video/*" style="display:none">';
-  // 重新绑定 fileIn
   document.getElementById('fileIn').addEventListener('change', () => {
     if (document.getElementById('fileIn').files.length) {
       AppState.curFile = document.getElementById('fileIn').files[0];
@@ -107,7 +105,6 @@ async function startAnalysis() {
   document.getElementById('btn-go').disabled = true;
   showProg();
 
-  // 读取入库备注
   const memoEl = document.getElementById('analyze-memo');
   const memo = memoEl ? memoEl.value.trim() : '';
   AppState._analyzeMemo = memo;
@@ -115,16 +112,13 @@ async function startAnalysis() {
   await API.analyze(
     AppState.curFile,
     memo,
-    // onStep
     (step, message) => onSSE({ step, message }),
-    // onDone
     (data) => {
       AppState.analysisData = data;
       renderResult(data);
       document.getElementById('btn-go').disabled = false;
       setTimeout(hideProg, 300);
     },
-    // onError
     (e) => {
       showErr('拆解失败: ' + e.message);
       document.getElementById('btn-go').disabled = false;
@@ -166,7 +160,6 @@ function renderResult(data) {
   document.getElementById('btn-reset').style.display = '';
   document.getElementById('hdr-sub').textContent = '分析报告 - ' + (AppState.curFile ? AppState.curFile.name : '');
 
-  // 指标卡
   document.getElementById('metrics').innerHTML =
     '<div class="mc"><div class="mv c-orange">' + (ov.product_first_appear_seconds || '--') + '秒</div><div class="ml">产品首次出现</div><div class="ms">黄金3秒内出现最佳</div></div>' +
     '<div class="mc"><div class="mv c-green">' + (ov.product_exposure_seconds || '--') + '秒</div><div class="ml">产品露出时长</div><div class="ms">建议占比30%以上</div></div>' +
@@ -179,7 +172,6 @@ function renderResult(data) {
     ? '💡 优化建议：产品首现时间为' + fa + '秒，' + (fa > 5 ? '建议在5秒内展示产品' : '表现良好！')
     : '';
 
-  // 渲染各 Tab
   renderTab1(shots);
   renderTab2(shots);
   renderTab3(a, ss, shots);
@@ -193,11 +185,10 @@ function switchTab(id, el) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   el.classList.add('active');
   document.getElementById(id).classList.add('active');
-  // Tab 4 懒加载
   if (id === 't4') renderTab4();
 }
 
-// ============== 飞书入库（确认面板模式 v3.5.1） ==============
+// ============== 飞书入库（确认面板模式 v3.5.3） ==============
 
 const SAVE_LIBRARIES = {
   cta_hook: { name: 'CTA · 开头钩子', color: 'blue', parent: 'cta' },
@@ -217,56 +208,88 @@ function saveToFeishu() {
   const a = AppState.analysisData?.analysis || AppState.analysisData;
   const em = a.extracted_materials || {};
 
-  // 构建建议列表（每个库列出具体内容）
   const suggestions = [];
 
+  // ★ V3.5.3: CTA 从统一的 em.cta 数组按 stage 分段
+  const allCta = em.cta || [];
+
   // CTA 开头
-  const hooks = (em.hook_scripts || []).filter(h => !h.type || h.type.includes('开头'));
+  const hooks = allCta.filter(c => c.stage && c.stage.includes('开头'));
   if (hooks.length > 0) {
-    const detail = hooks.map(h => '「' + (h.text || '').substring(0, 40) + '」' + (h.action_type ? '（' + h.action_type + '）' : '')).join('\n');
+    const detail = hooks.map(h =>
+      '「' + (h.text_foreign || '').substring(0, 50) + '」（' + (h.action_type || '') + '）\n' +
+      '  💡 ' + (h.psychology || '') + '\n' +
+      '  🎬 ' + (h.visual_pairing || '')
+    ).join('\n\n');
     suggestions.push({ lib: 'cta_hook', reason: detail, checked: true, note: '' });
   }
 
   // CTA 中间
-  const mids = (em.hook_scripts || []).filter(h => h.type && h.type.includes('中间'));
+  const mids = allCta.filter(c => c.stage && c.stage.includes('中间'));
   if (mids.length > 0) {
-    const detail = mids.map(h => '「' + (h.text || '').substring(0, 40) + '」').join('\n');
+    const detail = mids.map(h =>
+      '「' + (h.text_foreign || '').substring(0, 50) + '」（' + (h.action_type || '') + '）\n' +
+      '  💡 ' + (h.psychology || '') + '\n' +
+      '  🎬 ' + (h.visual_pairing || '')
+    ).join('\n\n');
     suggestions.push({ lib: 'cta_mid', reason: detail, checked: true, note: '' });
   }
 
   // CTA 结尾
-  const ends = (em.cta_scripts || []);
+  const ends = allCta.filter(c => c.stage && c.stage.includes('结尾'));
   if (ends.length > 0) {
-    const detail = ends.map(c => '「' + (c.text || '').substring(0, 40) + '」' + (c.incentive ? '权益：' + c.incentive : '')).join('\n');
+    const detail = ends.map(h =>
+      '「' + (h.text_foreign || '').substring(0, 50) + '」（' + (h.action_type || '') + '）\n' +
+      '  💡 ' + (h.psychology || '') + '\n' +
+      '  🎬 ' + (h.visual_pairing || '')
+    ).join('\n\n');
     suggestions.push({ lib: 'cta_end', reason: detail, checked: true, note: '' });
   }
 
   // 痛点库
   if ((em.pain_points || []).length > 0) {
-    const detail = (em.pain_points || []).map(p => '· ' + (p.scene || p.user_pain || '') + (p.emotion_keywords ? '（' + (p.emotion_keywords || []).join('、') + '）' : '')).join('\n');
+    const detail = (em.pain_points || []).map(p =>
+      '· 📍 ' + (p.scene_name || '') + '（' + (p.scene_category || '') + '）\n' +
+      '  😰 痛点：' + (p.user_pain || '') + '\n' +
+      '  🏷️ 情绪：' + (p.emotion_keywords || []).join('、') + '\n' +
+      '  💊 切入：' + (p.product_solution || '') + '\n' +
+      '  🎬 角度：' + (p.content_angle || '')
+    ).join('\n\n');
     suggestions.push({ lib: 'painpoint', reason: detail, checked: true, note: '' });
   }
 
-  // 卖点画面库
-  if ((em.selling_points || []).length > 0) {
-    const detail = (em.selling_points || []).map((s, i) => '①②③④⑤⑥⑦⑧⑨⑩'[i] + ' ' + (s.description || '') + (s.visual_type ? '（' + s.visual_type + '）' : '') + (s.shooting_notes ? ' — ' + s.shooting_notes : '')).join('\n');
+  // 卖点画面库 ★ V3.5.3: 字段名从 selling_points 改为 selling_visuals
+  if ((em.selling_visuals || []).length > 0) {
+    const nums = '①②③④⑤⑥⑦⑧⑨⑩';
+    const detail = (em.selling_visuals || []).map((s, i) =>
+      (nums[i] || (i+1)) + ' 「' + (s.visual_type || '') + '」\n' +
+      '  📷 ' + (s.shooting_notes || '') + '\n' +
+      '  🎯 作用：' + (s.purpose || '')
+    ).join('\n\n');
     suggestions.push({ lib: 'sellingpt', reason: detail, checked: true, note: '' });
   }
 
   // 社会证明库
   if ((em.social_proof || []).length > 0) {
-    const detail = (em.social_proof || []).map(s => '· [' + (s.type || '') + '] ' + (s.content || '')).join('\n');
+    const detail = (em.social_proof || []).map(s =>
+      '· [' + (s.proof_type || '') + '] ' + (s.material_name || '') +
+      ' (' + (s.trust_strength || '') + ')\n' +
+      '  📌 ' + (s.usage_scenario || '')
+    ).join('\n\n');
     suggestions.push({ lib: 'socialproof', reason: detail, checked: true, note: '' });
   }
 
-  // 权益库
-  const benefits = (em.cta_scripts || []).filter(c => c.incentive);
-  if (benefits.length > 0) {
-    const detail = benefits.map(c => '· ' + c.incentive).join('\n');
-    suggestions.push({ lib: 'benefit', reason: detail, checked: true, note: '' });
+  // 权益库 ★ V3.5.3: 从 em.benefits 读取，默认不勾选
+  if ((em.benefits || []).length > 0) {
+    const detail = (em.benefits || []).map(b =>
+      '· ' + (b.benefit_name || '') + '（' + (b.benefit_type || '') + '）\n' +
+      '  📝 ' + (b.description || '') + '\n' +
+      '  💰 成本：' + (b.cost_level || '')
+    ).join('\n\n');
+    suggestions.push({ lib: 'benefit', reason: detail, checked: false, note: '' });
   }
 
-  // BGM — 只显示情绪类型，标注需手动填写
+  // BGM — 默认不勾选
   if (em.bgm && em.bgm.mood) {
     suggestions.push({ lib: 'bgm', reason: '情绪类型：' + em.bgm.mood + '\n风格：' + (em.bgm.description || '') + '\n⚠️ 曲名和音乐人需手动填写（AI 无法识别具体曲目）', checked: false, note: '' });
   }
@@ -278,18 +301,21 @@ function saveToFeishu() {
 function renderSavePanel(suggestions) {
   const panel = document.getElementById('save-panel');
 
-  // 备注提示（显示分析时填的备注）
   const memo = AppState._analyzeMemo || '';
   const memoHtml = memo
     ? '<div style="background:var(--accentBg);border:1px solid rgba(58,176,158,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--accent2)">💡 分析时的入库备注：' + esc(memo) + '</div>'
     : '';
 
-  // 竞品拆解库提示（自动入库，不可取消）
+  // 竞品拆解库自动入库提示 ★ V3.5.3: 显示 competitor_entry 摘要
+  const a = AppState.analysisData?.analysis || AppState.analysisData;
+  const ce = a.competitor_entry || {};
   const autoSaveHtml = '<div style="background:var(--pinkBg);border:1px solid rgba(236,72,153,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--pink)">' +
-    '📌 竞品爆款拆解库 — 每次拆解自动入库（记录视频结构和可复用点）' +
+    '📌 <strong>竞品爆款拆解库</strong> — 每次拆解自动入库' +
+    (ce.title ? '<br>📝 ' + esc(ce.title) : '') +
+    (ce.hook_script ? '<br>🎣 钩子：' + esc((ce.hook_script || '').substring(0, 60)) : '') +
+    (ce.reusable_points ? '<br>♻️ 可复用：' + esc((ce.reusable_points || '').substring(0, 80)) : '') +
   '</div>';
 
-  // 库列表
   let libRows = suggestions.map((s, i) => {
     const lib = SAVE_LIBRARIES[s.lib];
     if (!lib) return '';
@@ -303,7 +329,6 @@ function renderSavePanel(suggestions) {
     '</div>';
   }).join('');
 
-  // 添加遗漏库的下拉
   const existingLibs = suggestions.map(s => s.lib);
   const allLibKeys = Object.keys(SAVE_LIBRARIES);
   const missingLibs = allLibKeys.filter(k => !existingLibs.includes(k));
@@ -313,7 +338,7 @@ function renderSavePanel(suggestions) {
     if (v) addOptions += '<option value="' + k + '">' + v.name + '</option>';
   });
 
-  const checkedCount = suggestions.filter(s => s.checked).length + 1; // +1 for auto competitor
+  const checkedCount = suggestions.filter(s => s.checked).length + 1;
 
   panel.innerHTML = '<div class="archive-panel">' +
     '<h3>📝 入库确认</h3>' +
@@ -382,9 +407,7 @@ async function saveConfirm() {
     const analysis = AppState.analysisData?.analysis || AppState.analysisData;
     const videoUrl = AppState.analysisData?.videoUrl || '';
     const filename = AppState.curFile ? AppState.curFile.name : '';
-    // 合并 CTA 子类型为 cta
     const libs = [];
-    // 竞品库自动加入
     libs.push({ lib: 'competitor', note: memo });
     selected.forEach(s => {
       const parent = SAVE_LIBRARIES[s.lib]?.parent || s.lib;

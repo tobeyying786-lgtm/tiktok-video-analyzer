@@ -43,12 +43,10 @@ function getMimeType(f) { return { '.mp4':'video/mp4','.mov':'video/quicktime','
 
 /**
  * ffmpeg 预分析：获取真实时长 + 场景切换时间点
- * 用作 Gemini 的参考输入，提高时长和镜头数准确性
  */
 function ffprobeAnalyze(videoPath) {
   const result = { duration: null, sceneChanges: [], fps: null, resolution: null };
   try {
-    // 1. 用 ffprobe 获取真实时长、fps、分辨率
     const probeJson = execSync(
       `ffprobe -v quiet -print_format json -show_format -show_streams "${videoPath}"`,
       { timeout: 30000, stdio: 'pipe' }
@@ -68,8 +66,6 @@ function ffprobeAnalyze(videoPath) {
     console.error('ffprobe 元数据获取失败:', e.message);
   }
   try {
-    // 2. 用 ffmpeg scene detect 获取场景切换时间点
-    // threshold=0.3 适合短视频快速剪辑风格
     const sceneOutput = execSync(
       `ffmpeg -i "${videoPath}" -filter:v "select='gt(scene,0.3)',showinfo" -f null - 2>&1 | grep showinfo | grep pts_time`,
       { timeout: 60000, shell: true, stdio: 'pipe' }
@@ -80,7 +76,6 @@ function ffprobeAnalyze(videoPath) {
       result.sceneChanges.push(parseFloat(parseFloat(match[1]).toFixed(2)));
     }
   } catch (e) {
-    // scene detect 可能无输出（无场景切换），不算错误
     console.log('ffmpeg scene detect: 无场景切换或命令失败');
   }
   return result;
@@ -118,10 +113,17 @@ async function feishuCreate(tableId, fields) {
   if (d.code !== 0) throw new Error('飞书写入失败: ' + (d.msg || d.code));
   return d.data?.record;
 }
-
-function matchStructure(fw) { const f=(fw||'').toLowerCase(); if(f.includes('痛点'))return'痛点揭露+解决方案';if(f.includes('对比'))return'对比测试';if(f.includes('开箱'))return'开箱展示';if(f.includes('科普'))return'教程类';if(f.includes('真实'))return'日常vlog';if(f.includes('证明'))return'UGC买家秀';return'痛点揭露+解决方案'; }
-function matchAction(a) { const m={'痛点共鸣':'痛点共鸣','提问触发':'提问触发','结果前置':'结果前置','反常识':'反常识','数字可信':'数字可信','场景代入':'场景代入','稀缺促单':'稀缺促单','损失厌恶':'损失厌恶','直接指令':'直接指令','权益利诱':'权益利诱'};return m[a]||'痛点共鸣'; }
-function matchStage(t) { if(!t)return'开头（前3秒钩子）';if(t.includes('开头'))return'开头（前3秒钩子）';if(t.includes('中间'))return'中间（卖点引导）';if(t.includes('结尾'))return'结尾（促单转化）';return'开头（前3秒钩子）'; }
+async function feishuList(tableId, opts = {}) {
+  const token = await getFeishuToken();
+  const params = new URLSearchParams();
+  if (opts.page_size) params.set('page_size', opts.page_size);
+  if (opts.page_token) params.set('page_token', opts.page_token);
+  const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${FEISHU_CONFIG.app_token}/tables/${tableId}/records?${params}`;
+  const r = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+  const d = await r.json();
+  if (d.code !== 0) throw new Error('飞书读取失败: ' + (d.msg || d.code));
+  return d.data;
+}
 
 // === API: Analyze ===
 app.post('/api/analyze', upload.single('video'), async (req, res) => {
@@ -134,7 +136,6 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
 
     send(1, '📁 视频上传成功');
 
-    // ★ P0 修复：ffmpeg 预分析，获取真实时长 + 场景切换时间点
     send(2, '🔍 ffmpeg 正在预分析视频元数据...');
     const ffprobeData = ffprobeAnalyze(videoPath);
     const realDuration = ffprobeData.duration;
@@ -147,7 +148,6 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
     let frameworkList = [];
     try {
       if (FEISHU_APP_ID && FEISHU_APP_SECRET) {
-        // 复用缓存逻辑
         if (frameworkCache.data && Date.now() < frameworkCache.expires) {
           frameworkList = frameworkCache.data;
         } else {
@@ -156,7 +156,10 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
             name: r.fields['框架名称'] || '',
             formula: r.fields['短视频底层结构公式‼️'] || r.fields['短视频底层结构公式'] || '',
             hookType: r.fields['开头钩子类型'] || '',
-            logic: r.fields['核心逻辑'] || ''
+            logic: r.fields['核心逻辑'] || '',
+            difficulty: r.fields['难度'] || '',
+            level: r.fields['内容层级'] || '',
+            scenario: r.fields['适用场景'] || ''
           })).filter(i => i.name);
           frameworkCache = { data: frameworkList, expires: Date.now() + 300000 };
         }
@@ -165,28 +168,26 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
       console.error('框架库读取失败，使用空列表:', e.message);
     }
 
-    // 动态生成框架判定规则
+    // ★ V3.5.3: 框架注入不再截断核心逻辑，给完整内容
     const frameworkRules = frameworkList.length > 0
-      ? frameworkList.map(f => `- ${f.name}：${f.logic ? f.logic.substring(0, 100) : ''} → ${f.formula}`).join('\n')
-      : `- 经典痛点型：先展示痛点场景，再引出产品作为解决方案 → 停→病→药→信→买
-- 效果前置型：开头直接展示产品效果/结果，再回头讲痛点 → 药→停→病→药→信→买
-- 对比碾压型：核心有明确的 A vs B 对比环节 → 停→A vs B→药→信→买
-- 多场景轰炸型：展示产品在多个不同场景下使用 → 停→药→场景1→场景2→场景3→买
-- 开箱种草型：以拆箱/拆包为主线 → 停(拆箱)→药→药→信→买
-- 好奇悬念型：开头制造好奇/悬念留人 → 停(好奇)→病→药→信→买
-- 社交证明型：开头展示他人反应/评价 → 停(他人反应)→药→病→信→买
-- 科普权威型：以知识/科普切入 → 停(知识钩子)→病→药→信→买
-- 真实体验型：以真实使用场景/日常开始 → 停(真实场景)→病→药→信→买
-- 剧情反转型：有明确剧情冲突和反转 → 停(冲突)→病→反转→药→买`;
+      ? frameworkList.map(f => {
+          // 飞书富文本字段可能是数组，需要拼接
+          const logic = typeof f.logic === 'string' ? f.logic : (Array.isArray(f.logic) ? f.logic.map(x => x.text || '').join('') : String(f.logic || ''));
+          const scenario = typeof f.scenario === 'string' ? f.scenario : (Array.isArray(f.scenario) ? f.scenario.map(x => x.text || '').join('') : String(f.scenario || ''));
+          return `### ${f.name}\n- 公式：${f.formula}\n- 钩子类型：${f.hookType}\n- 核心逻辑：${logic.trim()}\n- 适用场景：${scenario.trim()}\n- 难度：${f.difficulty} | 层级：${f.level}`;
+        }).join('\n\n')
+      : `### 经典痛点型\n- 公式：停→病→药→信→买\n- 先展示痛点场景，再引出产品作为解决方案\n### 效果前置型\n- 公式：药→停→病→药→信→买\n- 开头直接展示产品效果/结果，再回头讲痛点\n### 对比碾压型\n- 公式：停→A vs B→药→信→买\n- 核心有明确的 A vs B 对比环节\n### 多场景轰炸型\n- 公式：停→药→场景1→场景2→场景3→买\n- 展示产品在多个不同场景下使用\n### 开箱种草型\n- 公式：停(拆箱)→药→药→信→买\n- 以拆箱/拆包为主线\n### 好奇悬念型\n- 公式：停(好奇)→病→药→信→买\n- 开头制造好奇/悬念留人\n### 社交证明型\n- 公式：停(他人反应)→药→病→信→买\n- 开头展示他人反应/评价\n### 科普权威型\n- 公式：停(知识钩子)→病→药→信→买\n- 以知识/科普切入\n### 真实体验型\n- 公式：停(真实场景)→病→药→信→买\n- 以真实使用场景/日常开始\n### 剧情反转型\n- 公式：停(冲突)→病→反转→药→买\n- 有明确剧情冲突和反转`;
 
     const frameworkNames = frameworkList.length > 0
-      ? frameworkList.map(f => f.name).join('/')
+      ? frameworkList.map(f => {
+          const name = typeof f.name === 'string' ? f.name : (Array.isArray(f.name) ? f.name.map(x => x.text || '').join('') : String(f.name || ''));
+          return name;
+        }).join('/')
       : '经典痛点型/效果前置型/对比碾压型/多场景轰炸型/开箱种草型/好奇悬念型/社交证明型/科普权威型/真实体验型/剧情反转型';
 
     const videoBase64 = fs.readFileSync(videoPath).toString('base64');
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-    // ★ P0 修复：增强 Gemini Prompt，注入 ffprobe 元数据 + 加强约束
     const ffprobeHint = realDuration
       ? `\n## ffmpeg 预分析数据（真实值，请严格遵守）\n- 视频真实总时长：${realDuration.toFixed(2)} 秒（你输出的 total_duration_seconds 必须等于此值）\n- 视频分辨率：${ffprobeData.resolution || '未知'}\n- 帧率：${ffprobeData.fps || '未知'} fps\n- ffmpeg 检测到的场景切换时间点（仅供参考，你需要根据实际内容微调）：${sceneChanges.length > 0 ? sceneChanges.join('s, ') + 's' : '未检测到明显场景切换'}\n`
       : '';
@@ -195,38 +196,215 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
       ? `\n## 用户入库备注（在分析和素材提取时重点关注，但不要忽略其他部分）\n${userMemo}\n`
       : '';
 
-    const prompt = `你是一个专业的TikTok带货短视频拆解分析师。请对这个视频进行精确的逐镜头拆解分析。
+    // ★★★ V3.5.3 核心改动：全面重写 prompt ★★★
+    const prompt = `你是一个专业的TikTok带货短视频拆解分析师。请对这个视频进行精确的逐镜头拆解分析，并按各素材库的填写标准提取可入库素材。
 ${ffprobeHint}${memoHint}
 ## 关键约束（必须严格遵守）
 1. total_duration_seconds 必须等于 ffmpeg 检测到的真实时长（${realDuration ? realDuration.toFixed(2) : '请自行判断'}秒），不得偏差超过 0.5 秒
 2. 所有镜头的 time_start/time_end 必须是精确数字（不是字符串），最后一个镜头的 time_end 必须等于视频总时长
 3. 镜头之间不允许有时间空隙或重叠：第 N+1 个镜头的 time_start 必须等于第 N 个镜头的 time_end
 4. 每个镜头都必须同样详细地描述，后半段镜头的描述不得比前半段简略——越到后面越重要（结尾促单、CTA、信任建设等往往在后半段）
-5. product_first_appear_seconds 必须精确到秒，如果产品从未出现则填 null（不要留空字符串）
+5. product_first_appear_seconds 必须精确到秒，如果产品从未出现则填 null
 
-## 框架判定规则（基于结构顺序而非内容，从飞书框架库动态加载）
+## 全局过滤规则（非常重要）
+以下内容不属于视频创作内容，必须在所有素材提取中过滤掉：
+- 平台水印文字，如"来抖音 发现更多创作者""抖音号:xxx""TikTok"等
+- 平台强制贴片，如开屏广告、平台推荐标签
+- 非视频创作者主动添加的元素
+
+## 框架判定规则（基于结构顺序而非内容品类）
+
 ${frameworkRules}
 
-判定时看的是「结构顺序」（停病药信买的出现顺序），不是看内容品类。
-如果视频结构不完全匹配上述任何框架但属于某种框架的分型（如停→病→病→病→药→信→买仍然是经典痛点型），则归入该框架。
-如果确实是全新的结构组合，framework 字段填"新框架"，并在 formula 中写出实际的结构公式。
+**判定逻辑：**
+- 看的是「结构顺序」（停病药信买的出现顺序），不是看内容品类
+- 如果视频结构是某种框架的分型（如停→病→病→病→药→信→买仍然是经典痛点型），归入该框架
+- 如果确实是全新的结构组合，framework 字段填"新框架"，并在 formula 中写出实际的结构公式，同时在 new_framework_info 中填写完整信息供入库
 
 ## 输出格式（严格 JSON，不要有多余文字）
+
 {
-  "video_overview": { "total_duration_seconds": 数字, "total_shots": 数字, "product_first_appear_seconds": 数字或null, "product_exposure_seconds": 数字, "product_exposure_ratio": 百分比数字 },
-  "shots": [{ "shot_number": 数字, "time_start": 数字, "time_end": 数字, "shot_type": "痛点放大/产品展示/使用场景/细节特写/效果对比/行动引导/开箱展示/社交证明/情绪渲染", "scene_description": "详细中文画面描述（至少20字）", "text_overlay": "画面文字（没有则空字符串）", "voiceover": "口播内容（没有则空字符串）", "product_visible": true或false }],
-  "script_structure": { "framework": "${frameworkNames}/新框架", "formula": "如：停→病→药→信→买", "hook_type": "钩子类型", "structure_breakdown": [{ "element": "停/病/药/信/买", "time_range": "0.0-3.2s", "description": "具体做了什么", "shots_included": [编号数组] }] },
-  "extracted_materials": {
-    "hook_scripts": [{"text":"原文","type":"开头/中间/结尾","action_type":"痛点共鸣/提问触发/结果前置/反常识/数字可信/场景代入"}],
-    "pain_points": [{"scene":"场景","user_pain":"痛点","emotion_keywords":["词"],"product_solution":"方案"}],
-    "selling_points": [{"description":"卖点","visual_type":"前后对比/极限测试/细节放大/真实反应/场景演示/穿脱演示/开箱展示/认证展示","shooting_notes":"拍摄说明"}],
-    "social_proof": [{"type":"用户好评/网红背书/权威认证/销量数据","content":"内容"}],
-    "cta_scripts": [{"text":"原文","type":"结尾促单","incentive":"权益"}],
-    "bgm": {"mood":"紧张推进型/爽感共鸣型/轻松治愈型/流行趋势音","description":"风格描述"}
+  "video_overview": {
+    "total_duration_seconds": 数字,
+    "total_shots": 数字,
+    "product_first_appear_seconds": 数字或null,
+    "product_exposure_seconds": 数字,
+    "product_exposure_ratio": 百分比数字
   },
-  "reusable_points": "可复用亮点（至少3点）",
+
+  "shots": [{
+    "shot_number": 数字,
+    "time_start": 数字,
+    "time_end": 数字,
+    "shot_type": "痛点放大/产品展示/使用场景/细节特写/效果对比/行动引导/开箱展示/社交证明/情绪渲染",
+    "scene_description": "详细中文画面描述（至少20字）",
+    "text_overlay": "画面文字（没有则空字符串，过滤平台水印）",
+    "voiceover": "口播内容（没有则空字符串）",
+    "product_visible": true或false
+  }],
+
+  "script_structure": {
+    "framework": "${frameworkNames}/新框架",
+    "formula": "如：停→病→药→信→买",
+    "hook_type": "钩子类型",
+    "structure_breakdown": [{
+      "element": "停/病/药/信/买",
+      "time_range": "0.0-3.2s",
+      "description": "具体做了什么",
+      "shots_included": [编号数组]
+    }],
+    "new_framework_info": null 或 {
+      "name": "框架名称",
+      "formula": "完整公式",
+      "hook_type": "钩子类型",
+      "logic": "核心逻辑（详细描述每一步做什么，至少50字）",
+      "scenario": "适用场景",
+      "difficulty": "入门/进阶/高阶",
+      "level": "1.0强痛点/2.0兴趣科普/3.0冲突反转/4.0真实感/通用"
+    }
+  },
+
+  "extracted_materials": {
+
+    "cta": [
+      {
+        "text_foreign": "原始外文话术（口播或字幕原文）",
+        "text_cn": "中文翻译",
+        "stage": "开头（前3秒钩子）或 中间（卖点引导）或 结尾（促单转化）",
+        "action_type": "行动类型（见下方枚举）",
+        "psychology": "话术逻辑：为什么这句话能留住人/促单，心理机制是什么",
+        "visual_pairing": "配合画面：这句话出现时屏幕上是什么画面"
+      }
+    ],
+
+    "pain_points": [
+      {
+        "scene_name": "具体到行为级别的场景名称",
+        "scene_category": "场景分类",
+        "user_pain": "用户真正恐惧/焦虑的事",
+        "emotion_keywords": ["情绪词"],
+        "product_solution": "产品如何解决这个痛点",
+        "content_angle": "内容角度建议：拍成什么类型的视频"
+      }
+    ],
+
+    "selling_visuals": [
+      {
+        "visual_type": "画面类型",
+        "shooting_notes": "具体到镜头语言的拍摄说明",
+        "purpose": "这个画面解决消费者什么心理障碍",
+        "video_stage": "开头/中间/结尾/通用"
+      }
+    ],
+
+    "social_proof": [
+      {
+        "proof_type": "用户好评/网红背书/权威认证/销量数据",
+        "material_name": "素材名称",
+        "usage_scenario": "具体怎么在视频里用",
+        "trust_strength": "⭐⭐ 中等信任 或 ⭐⭐⭐ 强信任"
+      }
+    ],
+
+    "benefits": [
+      {
+        "benefit_name": "权益名称",
+        "benefit_type": "折扣券/产品赠送/免费试用/专属赠品/包邮免运/延保售后/会员权益/独家内容/捆绑套装/抽奖福利",
+        "description": "具体内容和价值说明",
+        "script_example": "视频中怎么讲的（原文）",
+        "cost_level": "零成本/低成本/中成本/高成本"
+      }
+    ],
+
+    "bgm": {
+      "mood": "紧张推进型/爽感共鸣型/轻松治愈型/流行趋势音",
+      "description": "风格描述（节奏、情绪走势、配器特征）"
+    }
+  },
+
+  "competitor_entry": {
+    "title": "视频标题/描述（一句话概括视频内容）",
+    "hook_script": "开头钩子话术原文",
+    "video_structure": "视频结构类型",
+    "reusable_points": "可复用亮点（必须写清'可复用模式 + 适用什么场景'）"
+  },
+
   "optimization_suggestions": "优化建议（至少2点）"
 }
+
+## ★★★ 各素材库的填写标准和边界（非常重要，决定提取质量）★★★
+
+### CTA 号召行动库
+**定义**：话术内容 + 展示方式 + 心理机制的组合，不只是文字。
+**分三段提取**：
+- 开头（前3秒钩子）：让用户停下来的话术
+- 中间（卖点引导）：引导用户理解产品价值的话术
+- 结尾（促单转化）：促使用户下单的话术
+**行动类型枚举**：
+- 开头常用：痛点共鸣 / 提问触发 / 结果前置 / 反常识 / 数字可信 / 场景代入
+- 结尾常用：稀缺促单 / 损失厌恶 / 直接指令 / 权益利诱
+**每条必须包含**：
+- text_foreign：原始外文话术
+- text_cn：中文翻译
+- psychology：心理机制（如"用问句触发对号入座，大脑会自动回答'是/不是'，从而停留观看"）
+- visual_pairing：配合什么画面（如"宝宝在换衣台上扭动挣扎的真实画面"）
+**边界**：
+- ❌ 平台水印不是CTA（如"来抖音 发现更多创作者""抖音号:xxx"）
+- ❌ 场景描述不是CTA（场景归痛点库）
+- ✅ CTA = 话术+展示方式的组合效果
+
+### 痛点需求场景库
+**定义**：具体到行为级别的用户痛点场景，用于触发情绪共鸣。
+**填写标准**：
+- scene_name：必须具体到行为级别（✅"Daycare早晨赶时间穿搭" ❌"洗衣机脏"）
+- scene_category：居家日常/紧急突发/出行旅途/社交约会/运动健身/职场办公/节日送礼/换季过渡
+- user_pain：必须是用户侧的恐惧/焦虑/尴尬（✅"穿了没洗的衣服导致皮肤发痒甚至皮肤病" ❌"洗衣机没清洁"）
+- emotion_keywords：焦虑/崩溃/慌张/尴尬/恶心/担忧/纠结等
+- product_solution：产品如何解决这个痛点
+- content_angle：拍成什么类型的视频（如"拍成妈妈早晨日常vlog，用计时器展示穿衣速度"）
+**边界**：
+- ❌ "洗衣机没清洁"不是痛点（这是产品功能描述）
+- ✅ "穿了没洗的衣服导致皮肤发痒甚至皮肤病"才是痛点（用户真正害怕的事）
+- 痛点 = 让用户"痛"的点（恐惧、焦虑、尴尬），不是产品功能
+
+### 卖点画面库
+**定义**：每个卖点该用什么画面来呈现，具体到镜头语言，照着拍就行。
+**填写标准**：
+- visual_type：面料特写/穿脱演示/洗涤对比测试/认证标签展示/真实反应镜头/场景演示/极限测试/细节放大/开箱展示/前后对比
+- shooting_notes：必须具体到镜头语言（✅"微距镜头拍面料纹理，手指轻轻捏起有机棉面料展示柔软度和厚度。慢动作拍面料回弹，光线打出质感" ❌"展示产品效果"）
+- purpose：这个画面解决消费者什么心理障碍（✅"中高端最需要证明'贵得值'。洗涤测试是最直观的品质证明" ❌"展示产品好"）
+- video_stage：适合放在视频哪个位置
+**边界**：卖点画面 = 视觉上如何证明产品好，不是文字描述产品好
+
+### 社会证明库
+**定义**：只有第三方背书才算社会证明。基于社会机构、社会影响力组织、真实用户的第三方背书。
+**填写标准**：
+- proof_type：用户好评/UGC视频/前后对比图/网红实测/权威认证/销量数据
+- material_name：如"好评截图""GOTS有机认证""评论区精选截图"
+- usage_scenario：具体怎么在视频里用（如"录屏滑动评论区的方式比截图更真实、更有代入感"）
+- trust_strength：⭐⭐ 中等信任 / ⭐⭐⭐ 强信任
+**边界**：
+- ❌ "洗后有淡淡香气"不是社会证明（这是产品体验/卖点，归卖点画面库）
+- ❌ 产品功能展示不是社会证明
+- ✅ 社会证明 = 来自第三方的背书（用户评价、认证证书、网红推荐、销量数据）
+- 如果视频里没有出现任何第三方背书，这个数组留空 []
+
+### 权益库
+**定义**：视频中展示的实际购买激励（折扣/买赠/包邮/试用等），对我方权益设计有参考价值。
+**只有视频里展示了具体购买权益才提取**，否则此数组留空 []。
+**边界**：
+- ❌ "点击下方小黄车"不是权益（这是CTA话术）
+- ❌ "解决洗衣机脏污问题"不是权益（这是产品功能）
+- ❌ "了解更多产品或关注博主"不是权益（这是CTA）
+- ✅ "买一送一""限时8折""前100名送赠品""包邮"才是权益
+
+### BGM 情绪库
+只输出情绪类型和风格描述，不要编造曲名或音乐人名（AI无法识别具体曲目）。
+
+### 竞品爆款拆解库（competitor_entry）
+**可复用点标准**：不只是描述视频做了什么，要写清楚"可复用模式 + 适用什么场景"。
+- ✅ "分屏对比格式+计时器叠加画面，可复用于任何AB对比产品展示"
+- ❌ "视频用了分屏对比"（只描述了做了什么，没说可复用在哪）
 
 重要：time_start 和 time_end 必须是纯数字（不带s后缀，不是字符串）。请先确定总时长和所有镜头切换点，再逐个填写每个镜头的详细信息。`;
 
@@ -238,7 +416,7 @@ ${frameworkRules}
     try { const m = responseText.match(/\{[\s\S]*\}/); analysisResult = m ? JSON.parse(m[0]) : { raw_response: responseText, parse_error: true }; }
     catch(e) { console.error('JSON解析失败:', e.message); analysisResult = { raw_response: responseText, parse_error: true }; }
 
-    // ★ P0 修复：后处理校验 — 如果 Gemini 返回的时长偏差超过 1 秒，用 ffprobe 真实值覆盖
+    // 后处理校验：时长
     if (analysisResult.video_overview && realDuration) {
       const aiDuration = analysisResult.video_overview.total_duration_seconds;
       if (!aiDuration || Math.abs(aiDuration - realDuration) > 1) {
@@ -247,7 +425,7 @@ ${frameworkRules}
       }
     }
 
-    // ★ 修复：产品露出占比 — 不信 AI 的百分比，用已有数据自己算
+    // 产品露出占比自算
     if (analysisResult.video_overview) {
       const ov = analysisResult.video_overview;
       const dur = ov.total_duration_seconds;
@@ -257,7 +435,6 @@ ${frameworkRules}
       }
     }
 
-    // 附带 ffprobe 数据供前端参考
     if (!analysisResult.parse_error) {
       analysisResult._ffprobe = ffprobeData;
     }
@@ -335,11 +512,9 @@ ${shots.map(s => `#${s.shot_number} [${s.shot_type}] ${s.time_start}s-${s.time_e
     });
     if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
     const data = await r.json(), content = data.choices?.[0]?.message?.content || '';
-    // 暴力清理：去掉所有 markdown 代码块标记
     const cleaned = content.replace(/`{3,}[\w]*\s*/g, '').trim();
     let rw;
     try {
-      // 找到第一个 { 和最后一个 } 之间的内容
       const start = cleaned.indexOf('{');
       const end = cleaned.lastIndexOf('}');
       if (start !== -1 && end > start) {
@@ -422,33 +597,39 @@ ${rewriteBlocks.map(b => `[${b.element}]（对应原视频镜头 ${(b.original_s
   } catch (error) { console.error('扩展失败:', error); res.status(500).json({ error: '扩展失败: ' + error.message }); }
 });
 
-// === API: Feishu Save (入库确认面板模式) ===
+// === API: Feishu Save (入库确认面板模式) ★ V3.5.3 字段映射更新 ===
 app.post('/api/save-to-feishu', async (req, res) => {
   try {
     if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) return res.status(500).json({ error: '飞书凭证未配置' });
     const { analysis, videoCode, videoUrl, filename, libs } = req.body;
     if (!analysis) return res.status(400).json({ error: '缺少分析数据' });
     const a = analysis, ov = a.video_overview||{}, ss = a.script_structure||{}, em = a.extracted_materials||{};
+    const ce = a.competitor_entry || {};
     const results = { saved: [], errors: [] };
     const videoLink = videoUrl ? { link: videoUrl, text: videoUrl } : undefined;
     const source = filename || '未命名';
 
-    // 如果前端传了 libs 列表，只写入选中的库
     const selectedLibs = (libs || []).map(l => l.lib);
     const shouldSave = (lib) => !libs || selectedLibs.includes(lib);
     const getNote = (lib) => { const l = (libs || []).find(x => x.lib === lib); return l ? l.note : ''; };
 
-    // 1. 竞品爆款拆解库
+    // 1. 竞品爆款拆解库 — 自动入库，使用 competitor_entry
     if (shouldSave('competitor')) {
       try {
-        const hooks = (em.hook_scripts||[]).map(h=>h.text).join('\n');
-        const reuse = typeof a.reusable_points==='string' ? a.reusable_points : JSON.stringify(a.reusable_points||'');
-        const bgm = em.bgm ? `${em.bgm.mood||''} - ${em.bgm.description||''}` : '';
         const note = getNote('competitor');
+        const hookScript = ce.hook_script || (em.cta || []).filter(c => c.stage && c.stage.includes('开头')).map(c => c.text_foreign).join('\n') || '';
+        const reuse = ce.reusable_points || '';
+        const bgmDesc = em.bgm ? `${em.bgm.mood||''} - ${em.bgm.description||''}` : '';
+
         await feishuCreate(FEISHU_CONFIG.tables.competitor, {
-          '视频标题/描述': source, '视频编码': videoCode||'', '钩子话术': hooks,
-          '视频结构': matchStructure(ss.framework), '使用BGM': bgm, '可复用点': reuse,
-          '拆解状态': '已拆解', '拆解时间': Date.now(),
+          '视频标题/描述': ce.title || source,
+          '视频编码': videoCode||'',
+          '钩子话术': hookScript,
+          '视频结构': ce.video_structure || ss.framework || '',
+          '使用BGM': bgmDesc,
+          '可复用点': reuse,
+          '拆解状态': '已拆解',
+          '拆解时间': Date.now(),
           ...(note ? { '入库备注': note } : {}),
           ...(videoLink ? { '视频文件地址': videoLink } : {})
         });
@@ -456,16 +637,18 @@ app.post('/api/save-to-feishu', async (req, res) => {
       } catch(e) { results.errors.push({ table: '竞品爆款拆解库', error: e.message }); }
     }
 
-    // 2. CTA库
+    // 2. CTA库 — 统一从 em.cta 数组读取
     if (shouldSave('cta')) {
-      const allCTA = [...(em.hook_scripts||[]), ...(em.cta_scripts||[]).map(c=>({text:c.text,type:'结尾',action_type:'稀缺促单'}))];
+      const allCTA = em.cta || [];
       for (const c of allCTA) {
         try {
           await feishuCreate(FEISHU_CONFIG.tables.cta, {
-            'CTA话术（英文）': c.text||'', '中文翻译': c.text||'',
-            '视频阶段': matchStage(c.type), '行动类型': matchAction(c.action_type),
-            '话术逻辑': `拆解提取-${source}`,
-            '配合画面': c.scene_description || '',
+            'CTA话术（外文）': c.text_foreign || '',
+            '中文翻译': c.text_cn || '',
+            '视频阶段': c.stage || '开头（前3秒钩子）',
+            '行动类型': c.action_type || '',
+            '话术逻辑': c.psychology || '',
+            '配合画面': c.visual_pairing || '',
             ...(getNote('cta') ? { '入库备注': getNote('cta') } : {})
           });
           results.saved.push({ table: 'CTA库' });
@@ -478,11 +661,12 @@ app.post('/api/save-to-feishu', async (req, res) => {
       for (const p of (em.pain_points||[])) {
         try {
           await feishuCreate(FEISHU_CONFIG.tables.painpoint, {
-            '场景名称': p.scene||p.user_pain||'',
+            '场景名称': p.scene_name || '',
             '场景分类': p.scene_category || '',
-            '用户痛点': p.user_pain||'',
+            '用户痛点': p.user_pain || '',
             '情绪关键词': (p.emotion_keywords||[]).join('、'),
-            '产品切入点': p.product_solution||'',
+            '产品切入点': p.product_solution || '',
+            '内容角度建议': p.content_angle || '',
             '来源': 'TikTok爆款',
             '关联视频链接': videoLink || '',
             ...(getNote('painpoint') ? { '入库备注': getNote('painpoint') } : {})
@@ -494,13 +678,13 @@ app.post('/api/save-to-feishu', async (req, res) => {
 
     // 4. 卖点画面库
     if (shouldSave('sellingpt')) {
-      for (const s of (em.selling_points||[])) {
+      for (const s of (em.selling_visuals||[])) {
         try {
           await feishuCreate(FEISHU_CONFIG.tables.sellingpt, {
-            '拍摄说明': s.shooting_notes||s.description||'',
-            '画面类型': s.visual_type||'',
-            '作用': s.description||'',
-            '适配视频阶段': s.stage || '',
+            '拍摄说明': s.shooting_notes || '',
+            '画面类型': s.visual_type || '',
+            '作用': s.purpose || '',
+            '配合视频阶段': s.video_stage || '',
             ...(getNote('sellingpt') ? { '入库备注': getNote('sellingpt') } : {})
           });
           results.saved.push({ table: '卖点库' });
@@ -513,10 +697,10 @@ app.post('/api/save-to-feishu', async (req, res) => {
       for (const s of (em.social_proof||[])) {
         try {
           await feishuCreate(FEISHU_CONFIG.tables.socialproof, {
-            '证明类型': s.type||'',
-            '素材名称': s.content||'',
-            '信任强度': s.strength || '',
-            '使用建议': `拆解提取-${source}`,
+            '证明类型': s.proof_type || '',
+            '素材名称': s.material_name || '',
+            '信任强度': s.trust_strength || '',
+            '使用场景说明': s.usage_scenario || '',
             ...(getNote('socialproof') ? { '入库备注': getNote('socialproof') } : {})
           });
           results.saved.push({ table: '社会证明库' });
@@ -524,30 +708,29 @@ app.post('/api/save-to-feishu', async (req, res) => {
       }
     }
 
-    // 6. 权益库
+    // 6. 权益库 — 从 em.benefits 读取
     if (shouldSave('benefit')) {
-      for (const c of (em.cta_scripts||[])) {
-        if (c.incentive) {
-          try {
-            await feishuCreate(FEISHU_CONFIG.tables.benefit, {
-              '权益名称': c.incentive||'',
-              '权益类型': '',
-              '权益描述': c.text||'',
-              '适用场景': '带货促单',
-              ...(getNote('benefit') ? { '入库备注': getNote('benefit') } : {})
-            });
-            results.saved.push({ table: '权益库' });
-          } catch(e) { results.errors.push({ table: '权益库', error: e.message }); }
-        }
+      for (const b of (em.benefits||[])) {
+        try {
+          await feishuCreate(FEISHU_CONFIG.tables.benefit, {
+            '权益名称': b.benefit_name || '',
+            '权益类型': b.benefit_type || '',
+            '权益描述': b.description || '',
+            '话术示例': b.script_example || '',
+            '成本等级': b.cost_level || '',
+            '适用场景': '竞品参考',
+            ...(getNote('benefit') ? { '入库备注': getNote('benefit') } : {})
+          });
+          results.saved.push({ table: '权益库' });
+        } catch(e) { results.errors.push({ table: '权益库', error: e.message }); }
       }
     }
 
-    // 7. 爆款评论库 — 暂无自动提取数据，跳过
-    // 8. BGM情绪库
+    // 7. BGM情绪库
     if (shouldSave('bgm') && em.bgm && em.bgm.mood) {
       try {
         await feishuCreate(FEISHU_CONFIG.tables.bgm, {
-          'BGM名称': em.bgm.name || em.bgm.description || '待识别',
+          'BGM名称': '待识别（需手动填写）',
           '情绪类型': em.bgm.mood||'',
           '适用内容': ss.framework || '',
           '特征描述': em.bgm.description||'',
@@ -562,117 +745,7 @@ app.post('/api/save-to-feishu', async (req, res) => {
   } catch (error) { console.error('飞书入库失败:', error); res.status(500).json({ error: '飞书入库失败: ' + error.message }); }
 });
 
-// === API: 快速存档（AI分析 + 自动判断入哪个库） ===
-const ARCHIVE_LIBRARIES = {
-  cta: { name: '号召行动库 CTA', table: 'cta', fields: ['CTA话术（英文）', '中文翻译', '视频阶段', '行动类型', '话术逻辑'] },
-  painpoint: { name: '痛点需求场景库', table: 'painpoint', fields: ['场景名称', '场景分类', '用户痛点', '情绪关键词', '产品切入点', '来源'] },
-  sellingpt: { name: '卖点画面库', table: 'sellingpt', fields: ['拍摄说明', '画面类型', '作用', '适配视频阶段'] },
-  socialproof: { name: '社会证明库', table: 'socialproof', fields: ['证明类型', '素材名称', '信任强度', '使用建议'] },
-  benefit: { name: '权益库', table: 'benefit', fields: ['权益名称', '权益类型', '权益描述', '适用场景', '成本等级'] },
-  comment: { name: '爆款评论库', table: 'comment', fields: ['评论原文', '中文翻译', '情绪标签', '可转化方向', '来源视频链接'] },
-  competitor: { name: '竞品爆款拆解库', table: 'competitor', fields: ['视频标题/描述', '钩子话术', '视频结构', '可复用点'] },
-  bgm: { name: 'BGM情绪库', table: 'bgm', fields: ['BGM名称', '情绪类型', '适用内容', '特征描述'] }
-};
-
-app.post('/api/archive', upload.single('video'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: '请上传视频文件' });
-    if (!GEMINI_API_KEY) return res.status(500).json({ error: 'Gemini 未配置' });
-
-    const videoPath = req.file.path;
-    const memo = req.body.memo || '';
-    const videoBase64 = fs.readFileSync(videoPath).toString('base64');
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-    const libList = Object.entries(ARCHIVE_LIBRARIES).map(([k, v]) => `- ${k}: ${v.name}（字段：${v.fields.join('、')}）`).join('\n');
-
-    const prompt = `你是TikTok短视频素材管理助手。请观看这段视频片段，判断它应该归入哪个素材库，并填好该库的所有字段。
-
-## 可选素材库
-${libList}
-
-## 用户备注
-${memo || '无'}
-
-## 规则
-1. 只选一个最匹配的库
-2. 按素材本身的性质分类（比如一段展示用户好评的片段归入"社会证明库"，不是"痛点库"）
-3. 每个字段都要填，没有信息的填空字符串
-4. 全部用中文
-
-输出严格JSON：
-{
-  "target_library": "库的key（如cta/painpoint/sellingpt等）",
-  "confidence": "高/中/低",
-  "reason": "为什么归入这个库（一句话）",
-  "fields": {
-    "字段名1": "值1",
-    "字段名2": "值2"
-  }
-}`;
-
-    const result = await model.generateContent([
-      { text: prompt },
-      { inlineData: { mimeType: getMimeType(req.file.originalname), data: videoBase64 } }
-    ]);
-    const responseText = result.response.text();
-
-    let archiveResult;
-    try {
-      const cleaned = responseText.replace(/`{3,}[\w]*\s*/g, '').trim();
-      const start = cleaned.indexOf('{');
-      const end = cleaned.lastIndexOf('}');
-      if (start !== -1 && end > start) {
-        archiveResult = JSON.parse(cleaned.substring(start, end + 1));
-      } else {
-        archiveResult = { raw_response: responseText };
-      }
-    } catch (e) {
-      console.error('archive JSON解析失败:', e.message);
-      archiveResult = { raw_response: responseText };
-    }
-
-    // 清理视频文件（1小时后）
-    setTimeout(() => { try { if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath); } catch(e){} }, 3600000);
-
-    res.json({ success: true, archive: archiveResult, libraries: ARCHIVE_LIBRARIES });
-  } catch (error) {
-    console.error('存档分析失败:', error);
-    res.status(500).json({ error: '存档分析失败: ' + error.message });
-  }
-});
-
-// === API: 存档确认入库 ===
-app.post('/api/archive/save', async (req, res) => {
-  try {
-    if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) return res.status(500).json({ error: '飞书未配置' });
-    const { targetLibrary, fields } = req.body;
-    if (!targetLibrary || !fields) return res.status(400).json({ error: '缺少参数' });
-    const lib = ARCHIVE_LIBRARIES[targetLibrary];
-    if (!lib) return res.status(400).json({ error: '未知的库: ' + targetLibrary });
-    const tableId = FEISHU_CONFIG.tables[lib.table];
-    if (!tableId) return res.status(400).json({ error: '表ID未配置: ' + lib.table });
-    const record = await feishuCreate(tableId, fields);
-    res.json({ success: true, record, library: lib.name });
-  } catch (error) {
-    console.error('存档入库失败:', error);
-    res.status(500).json({ error: '存档入库失败: ' + error.message });
-  }
-});
-
-// === API: Feishu List Records (for BGM library) ===
-async function feishuList(tableId, opts = {}) {
-  const token = await getFeishuToken();
-  const params = new URLSearchParams();
-  if (opts.page_size) params.set('page_size', opts.page_size);
-  if (opts.page_token) params.set('page_token', opts.page_token);
-  const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${FEISHU_CONFIG.app_token}/tables/${tableId}/records?${params}`;
-  const r = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
-  const d = await r.json();
-  if (d.code !== 0) throw new Error('飞书读取失败: ' + (d.msg || d.code));
-  return d.data;
-}
-
+// === API: Feishu BGM ===
 app.get('/api/feishu/bgm', async (req, res) => {
   try {
     if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) return res.status(500).json({ error: '飞书未配置' });
@@ -692,7 +765,6 @@ let frameworkCache = { data: null, expires: 0 };
 app.get('/api/feishu/frameworks', async (req, res) => {
   try {
     if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) return res.status(500).json({ error: '飞书未配置' });
-    // 缓存 5 分钟
     if (frameworkCache.data && Date.now() < frameworkCache.expires) {
       return res.json({ success: true, frameworks: frameworkCache.data });
     }
@@ -703,26 +775,29 @@ app.get('/api/feishu/frameworks', async (req, res) => {
       hookType: r.fields['开头钩子类型'] || '',
       logic: r.fields['核心逻辑'] || '',
       difficulty: r.fields['难度'] || '',
-      level: r.fields['内容层级'] || ''
+      level: r.fields['内容层级'] || '',
+      scenario: r.fields['适用场景'] || ''
     })).filter(i => i.name);
     frameworkCache = { data: items, expires: Date.now() + 300000 };
     res.json({ success: true, frameworks: items });
   } catch (e) { console.error('框架库读取失败:', e); res.status(500).json({ error: e.message }); }
 });
 
-// === API: 新框架入库 ===
+// === API: 新框架入库 ★ V3.5.3 补齐全部字段 ===
 app.post('/api/feishu/framework/create', async (req, res) => {
   try {
     if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) return res.status(500).json({ error: '飞书未配置' });
-    const { name, formula, hookType, logic } = req.body;
+    const { name, formula, hookType, logic, scenario, difficulty, level } = req.body;
     if (!name || !formula) return res.status(400).json({ error: '缺少框架名称或公式' });
     const record = await feishuCreate(FEISHU_CONFIG.tables.framework, {
       '框架名称': name,
       '短视频底层结构公式‼️': formula,
       '开头钩子类型': hookType || '',
-      '核心逻辑': logic || ''
+      '核心逻辑': logic || '',
+      '适用场景': scenario || '',
+      '难度': difficulty || '',
+      '内容层级': level || ''
     });
-    // 清除缓存
     frameworkCache = { data: null, expires: 0 };
     res.json({ success: true, record });
   } catch (e) { console.error('框架入库失败:', e); res.status(500).json({ error: e.message }); }
@@ -744,21 +819,13 @@ app.get('/api/videogen/platforms', (req, res) => {
   });
 });
 
-// In-memory task store for video gen polling
 const videoTasks = new Map();
 
-// === Kie.ai Video Generation ===
 async function kieGenerate(prompt, model, aspectRatio) {
   const r = await fetch('https://api.kie.ai/api/v1/veo/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${KIE_API_KEY}` },
-    body: JSON.stringify({
-      prompt,
-      model: model || 'veo3_fast',
-      aspect_ratio: aspectRatio || '9:16',
-      watermark: '',
-      enableTranslation: true
-    })
+    body: JSON.stringify({ prompt, model: model || 'veo3_fast', aspect_ratio: aspectRatio || '9:16', watermark: '', enableTranslation: true })
   });
   const d = await r.json();
   if (d.code !== 200 && d.code !== 0) throw new Error('Kie.ai 提交失败: ' + (d.msg || JSON.stringify(d)));
@@ -766,34 +833,20 @@ async function kieGenerate(prompt, model, aspectRatio) {
 }
 
 async function kieGetStatus(taskId) {
-  const r = await fetch(`https://api.kie.ai/api/v1/veo/record-detail?taskId=${taskId}`, {
-    headers: { 'Authorization': `Bearer ${KIE_API_KEY}` }
-  });
+  const r = await fetch(`https://api.kie.ai/api/v1/veo/record-detail?taskId=${taskId}`, { headers: { 'Authorization': `Bearer ${KIE_API_KEY}` } });
   const d = await r.json();
   const status = d.data?.status || d.data?.task_status || 'unknown';
   const isComplete = status === 'completed' || status === 'success' || !!d.data?.video_url;
   const isFailed = status === 'failed' || status === 'error';
-  return {
-    status: isComplete ? 'completed' : isFailed ? 'failed' : 'processing',
-    videoUrl: d.data?.video_url || d.data?.output?.video_url || null,
-    coverUrl: d.data?.image_url || d.data?.cover_url || null,
-    raw: d.data
-  };
+  return { status: isComplete ? 'completed' : isFailed ? 'failed' : 'processing', videoUrl: d.data?.video_url || d.data?.output?.video_url || null, coverUrl: d.data?.image_url || d.data?.cover_url || null, raw: d.data };
 }
 
-// === fal.ai Video Generation ===
 async function falGenerate(prompt, model, aspectRatio) {
   const endpoint = model || 'fal-ai/veo3/fast';
   const r = await fetch(`https://queue.fal.run/${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Key ${FAL_API_KEY}` },
-    body: JSON.stringify({
-      prompt,
-      aspect_ratio: aspectRatio || '9:16',
-      duration: '8s',
-      resolution: '720p',
-      generate_audio: true
-    })
+    body: JSON.stringify({ prompt, aspect_ratio: aspectRatio || '9:16', duration: '8s', resolution: '720p', generate_audio: true })
   });
   if (!r.ok) { const e = await r.text(); throw new Error('fal.ai 提交失败: ' + e); }
   const d = await r.json();
@@ -801,15 +854,10 @@ async function falGenerate(prompt, model, aspectRatio) {
 }
 
 async function falGetStatus(taskId, endpoint) {
-  const r = await fetch(`https://queue.fal.run/${endpoint}/requests/${taskId}/status`, {
-    headers: { 'Authorization': `Key ${FAL_API_KEY}` }
-  });
+  const r = await fetch(`https://queue.fal.run/${endpoint}/requests/${taskId}/status`, { headers: { 'Authorization': `Key ${FAL_API_KEY}` } });
   const d = await r.json();
   if (d.status === 'COMPLETED') {
-    // Fetch actual result
-    const rr = await fetch(`https://queue.fal.run/${endpoint}/requests/${taskId}`, {
-      headers: { 'Authorization': `Key ${FAL_API_KEY}` }
-    });
+    const rr = await fetch(`https://queue.fal.run/${endpoint}/requests/${taskId}`, { headers: { 'Authorization': `Key ${FAL_API_KEY}` } });
     const result = await rr.json();
     return { status: 'completed', videoUrl: result.video?.url || null, coverUrl: null, raw: result };
   }
@@ -817,12 +865,10 @@ async function falGetStatus(taskId, endpoint) {
   return { status: 'processing', videoUrl: null, raw: d };
 }
 
-// === API: Submit video generation ===
 app.post('/api/videogen/generate', async (req, res) => {
   try {
     const { prompt, platform, model, aspectRatio } = req.body;
     if (!prompt) return res.status(400).json({ error: '缺少 prompt' });
-
     let result;
     if (platform === 'fal') {
       if (!FAL_API_KEY) return res.status(500).json({ error: 'FAL_API_KEY 未配置' });
@@ -831,37 +877,25 @@ app.post('/api/videogen/generate', async (req, res) => {
       if (!KIE_API_KEY) return res.status(500).json({ error: 'KIE_API_KEY 未配置' });
       result = await kieGenerate(prompt, model, aspectRatio);
     }
-
-    // Store task for polling
     const taskKey = `${result.platform}_${result.taskId}`;
     videoTasks.set(taskKey, { ...result, createdAt: Date.now(), prompt });
-
-    // Auto-cleanup after 2 hours
     setTimeout(() => videoTasks.delete(taskKey), 7200000);
-
     res.json({ success: true, taskId: result.taskId, platform: result.platform, taskKey });
   } catch (e) { console.error('视频生成提交失败:', e); res.status(500).json({ error: e.message }); }
 });
 
-// === API: Poll video generation status ===
 app.get('/api/videogen/status/:taskKey', async (req, res) => {
   try {
     const { taskKey } = req.params;
     const task = videoTasks.get(taskKey);
     if (!task) return res.status(404).json({ error: '任务不存在或已过期' });
-
     let status;
-    if (task.platform === 'fal') {
-      status = await falGetStatus(task.taskId, task.endpoint);
-    } else {
-      status = await kieGetStatus(task.taskId);
-    }
-
+    if (task.platform === 'fal') { status = await falGetStatus(task.taskId, task.endpoint); }
+    else { status = await kieGetStatus(task.taskId); }
     res.json({ success: true, ...status, taskKey });
   } catch (e) { console.error('状态查询失败:', e); res.status(500).json({ error: e.message }); }
 });
 
-// === Health ===
 app.get('/api/health', (req, res) => {
   let ffmpeg = false; try { execSync('ffmpeg -version', { stdio:'pipe', timeout:5000 }); ffmpeg = true; } catch(e) {}
   res.json({ status: 'ok', timestamp: new Date().toISOString(), services: { gemini: !!GEMINI_API_KEY, openrouter: !!OPENROUTER_API_KEY, feishu: !!(FEISHU_APP_ID&&FEISHU_APP_SECRET), ffmpeg, kie: !!KIE_API_KEY, fal: !!FAL_API_KEY } });
