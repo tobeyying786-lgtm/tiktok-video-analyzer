@@ -1,23 +1,17 @@
 /**
- * tab3-analysis.js — 结构分析 + 板块级仿写 (V3.2)
- *
- * 左侧：脚本结构分析（停病药信买归类 + 框架匹配）
- * 右侧：板块级仿写（每个板块可编辑 textarea）→ 生成分镜脚本 → 传给 Tab 4
+ * tab3-analysis.js — V3.5.4
+ * 改动：框架标签可编辑+入库、去emoji、新框架入库传全部字段
  */
-
-// ============== 左侧：结构分析渲染 ==============
 
 function renderTab3(a, ss, shots) {
   const bd = ss.structure_breakdown || [];
 
-  // 给每个镜头标注角色（供 expand 使用）
   bd.forEach(b => {
     (b.shots_included || []).forEach(sn => {
       const shot = shots.find(x => x.shot_number === sn);
       if (shot) shot._role = b.element;
     });
   });
-  // 存到 state 供后续使用
   AppState._analysisShots = shots;
   AppState._structureBreakdown = bd;
 
@@ -33,8 +27,8 @@ function renderTab3(a, ss, shots) {
     blocks += '<div class="str-block">' +
       '<span class="sb-tag bg-' + cls + '">' + esc(b.element) + '</span>' +
       '<span class="sb-time">' + esc(b.time_range || '') + '</span>' +
-      '<span class="sb-count">x' + sn.length + ' 个镜头</span>' +
-      '<div class="sb-desc" style="margin-top:10px">' + sd.map(d => esc(d)).join('；') + '</div>' +
+      '<span class="sb-count">x' + sn.length + '</span>' +
+      '<div class="sb-desc" style="margin-top:10px">' + sd.map(d => esc(d)).join('; ') + '</div>' +
       '<div class="sb-note">' + esc(b.description || '') + '</div>' +
     '</div>';
   });
@@ -42,28 +36,51 @@ function renderTab3(a, ss, shots) {
   const filename = AppState.curFile ? AppState.curFile.name.replace(/\.[^.]+$/, '') : '';
   const framework = ss.framework || '未识别';
   const formula = ss.formula || '';
+  const hookType = ss.hook_type || '';
   const isNewFramework = framework === '新框架';
+  const newInfo = ss.new_framework_info || null;
 
-  // 入库按钮（仅新框架显示）
-  const saveFrameworkBtn = isNewFramework
-    ? ' <button class="btn-sm" style="padding:4px 12px;background:var(--orangeBg);border-color:var(--orange);color:var(--orange)" id="btn-save-framework" onclick="saveNewFramework()">+ 入框架库</button>'
-    : '';
+  // 框架区域：可编辑+入库
+  const frameworkSection =
+    '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:16px">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">' +
+        '<span style="font-size:13px;font-weight:700;color:var(--text2)">框架匹配</span>' +
+        '<span id="t3-framework-label" style="background:var(--accentBg);border:1px solid var(--accent);border-radius:8px;padding:4px 14px;font-size:13px;font-weight:700;color:var(--accent2)">' + esc(framework) + '</span>' +
+        '<span style="font-size:13px;color:var(--text3);font-family:JetBrains Mono,monospace">' + esc(formula) + '</span>' +
+        '<span style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:3px 12px;font-size:12px;color:var(--text3)">' + filename + '</span>' +
+      '</div>' +
+      // 可编辑区域
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">' +
+        '<div><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">框架名称</label>' +
+          '<input type="text" id="t3-fw-name" value="' + esc(isNewFramework && newInfo ? newInfo.name || '' : framework) + '" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text);font-family:inherit"></div>' +
+        '<div><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">结构公式</label>' +
+          '<input type="text" id="t3-fw-formula" value="' + esc(isNewFramework && newInfo ? newInfo.formula || formula : formula) + '" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text);font-family:inherit"></div>' +
+        '<div><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">钩子类型</label>' +
+          '<input type="text" id="t3-fw-hook" value="' + esc(isNewFramework && newInfo ? newInfo.hook_type || hookType : hookType) + '" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text);font-family:inherit"></div>' +
+        '<div><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">难度</label>' +
+          '<select id="t3-fw-diff" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text);font-family:inherit">' +
+            '<option value="入门"' + ((newInfo?.difficulty || '') === '入门' ? ' selected' : '') + '>入门</option>' +
+            '<option value="进阶"' + ((newInfo?.difficulty || '') === '进阶' ? ' selected' : '') + '>进阶</option>' +
+            '<option value="高阶"' + ((newInfo?.difficulty || '') === '高阶' ? ' selected' : '') + '>高阶</option>' +
+          '</select></div>' +
+      '</div>' +
+      '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">核心逻辑</label>' +
+        '<textarea id="t3-fw-logic" rows="2" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text);font-family:inherit;resize:vertical">' + esc(isNewFramework && newInfo ? newInfo.logic || '' : bd.map(b => '[' + b.element + '] ' + (b.description || '')).join('; ')) + '</textarea></div>' +
+      '<div style="margin-bottom:10px"><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">适用场景</label>' +
+        '<input type="text" id="t3-fw-scenario" value="' + esc(isNewFramework && newInfo ? newInfo.scenario || '' : '') + '" placeholder="适合什么品类/阶段使用" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text);font-family:inherit"></div>' +
+      '<button class="btn-sm" id="btn-save-framework" onclick="saveNewFramework()" style="padding:6px 16px">' + (isNewFramework ? '入框架库（新框架）' : '更新到框架库') + '</button>' +
+    '</div>';
 
   document.getElementById('t3').innerHTML =
     '<div class="str-layout">' +
       '<div class="str-left">' +
-        '<div style="font-size:16px;font-weight:700;margin-bottom:6px">📊 脚本结构分析</div>' +
-        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">' +
-          '<span style="background:var(--accentBg);border:1px solid var(--accent);border-radius:8px;padding:4px 14px;font-size:13px;font-weight:700;color:var(--accent2)">' + esc(framework) + '</span>' +
-          '<span style="font-size:13px;color:var(--text3);font-family:JetBrains Mono,monospace">' + esc(formula) + '</span>' +
-          saveFrameworkBtn +
-          '<span style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:3px 12px;font-size:12px;color:var(--text3)">' + filename + '</span>' +
-        '</div>' +
+        '<div style="font-size:16px;font-weight:700;margin-bottom:12px">脚本结构分析</div>' +
+        frameworkSection +
         blocks +
       '</div>' +
       '<div class="str-right" style="position:sticky;top:80px;align-self:start">' +
         '<div class="rw-panel">' +
-          '<h3>✏️ 跨品类仿写</h3>' +
+          '<h3>跨品类仿写</h3>' +
           '<div class="rw-field"><label>新品类</label><input id="rw-cat" placeholder="婴儿服饰"></div>' +
           '<div class="rw-field"><label>产品名称</label><input id="rw-name" placeholder="有机棉连体衣"></div>' +
           '<div class="rw-field"><label>核心卖点（可选）</label><input id="rw-sell" placeholder="A类面料、无荧光剂、双向拉链"></div>' +
@@ -74,7 +91,7 @@ function renderTab3(a, ss, shots) {
     '</div>';
 }
 
-// ============== 右侧：板块级仿写 ==============
+// ============== 板块级仿写 ==============
 
 async function doRewrite() {
   const cat = document.getElementById('rw-cat').value.trim();
@@ -82,67 +99,35 @@ async function doRewrite() {
   const sell = document.getElementById('rw-sell').value.trim();
   if (!cat || !name) return showErr('请填写新品类和产品名称');
   hideErr();
-
-  // 存产品信息供 expand 使用
   AppState._rwCategory = cat;
   AppState._rwProductName = name;
-
   const btn = document.getElementById('btn-rw');
-  btn.disabled = true;
-  btn.textContent = '仿写中…';
+  btn.disabled = true; btn.textContent = '仿写中...';
   const re = document.getElementById('rw-result');
-  re.innerHTML = '<div style="color:var(--text3);padding:20px;text-align:center"><div class="spin" style="margin:0 auto 10px"></div>Claude 正在生成板块仿写…</div>';
-
+  re.innerHTML = '<div style="color:var(--text3);padding:20px;text-align:center"><div class="spin" style="margin:0 auto 10px"></div>Claude 正在生成板块仿写...</div>';
   try {
     const analysis = AppState.analysisData?.analysis || AppState.analysisData;
     const rw = await API.rewrite(analysis, cat, name, sell);
     renderRewriteBlocks(rw);
-  } catch (e) {
-    re.innerHTML = '<div style="color:var(--red);padding:12px">❌ ' + esc(e.message) + '</div>';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '生成板块仿写';
-  }
+  } catch (e) { re.innerHTML = '<div style="color:var(--red);padding:12px">' + esc(e.message) + '</div>'; }
+  finally { btn.disabled = false; btn.textContent = '生成板块仿写'; }
 }
 
 function renderRewriteBlocks(rw) {
   const re = document.getElementById('rw-result');
-
-  // 如果后端返回了 raw_response，前端再试一次解析
   if (rw.raw_response) {
     try {
       const cleaned = rw.raw_response.replace(/`{3,}[\w]*\s*/g, '').trim();
-      const start = cleaned.indexOf('{');
-      const end = cleaned.lastIndexOf('}');
-      if (start !== -1 && end > start) {
-        const parsed = JSON.parse(cleaned.substring(start, end + 1));
-        if (parsed.blocks) {
-          console.log('[前端补救] JSON解析成功');
-          rw = parsed;
-        }
-      }
-    } catch (e) {
-      console.error('[前端补救] 也失败了:', e.message);
-    }
+      const s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}');
+      if (s !== -1 && e > s) { const parsed = JSON.parse(cleaned.substring(s, e + 1)); if (parsed.blocks) rw = parsed; }
+    } catch (e) {}
   }
-
-  // 如果还是 raw_response，显示原文
-  if (rw.raw_response) {
-    re.innerHTML = '<div style="background:var(--bg3);border-radius:var(--r);padding:16px;margin-top:16px;font-size:13px;color:var(--text2);white-space:pre-wrap;line-height:1.8">' + esc(rw.raw_response) + '</div>';
-    return;
-  }
-
-  // 存到全局状态
+  if (rw.raw_response) { re.innerHTML = '<div style="background:var(--bg3);border-radius:var(--r);padding:16px;margin-top:16px;font-size:13px;color:var(--text2);white-space:pre-wrap;line-height:1.8">' + esc(rw.raw_response) + '</div>'; return; }
   AppState.lastRewrite = rw;
   AppState._rewriteBlocks = rw;
   AppState.t4Initialized = false;
-
   const blocks = rw.blocks || [];
-  if (blocks.length === 0) {
-    re.innerHTML = '<div style="color:var(--text3);padding:12px">未生成仿写内容</div>';
-    return;
-  }
-
+  if (blocks.length === 0) { re.innerHTML = '<div style="color:var(--text3);padding:12px">未生成仿写内容</div>'; return; }
   let h = '<div style="margin-top:16px">';
   blocks.forEach((b, i) => {
     const cls = elemCls(b.element);
@@ -156,125 +141,74 @@ function renderRewriteBlocks(rw) {
     '</div>';
   });
   h += '</div>';
-
-  // 生成分镜脚本按钮
-  h += '<button class="btn-rw" id="btn-expand" onclick="doExpand()" style="margin-top:16px;background:var(--accent);color:#fff;border-color:var(--accent)">📋 生成分镜脚本 → Tab 4</button>';
+  h += '<button class="btn-rw" id="btn-expand" onclick="doExpand()" style="margin-top:16px;background:var(--accent);color:#fff;border-color:var(--accent)">生成分镜脚本 -> Tab 4</button>';
   h += '<div id="expand-status"></div>';
-
   re.innerHTML = h;
 }
 
 function t3UpdateBlock(idx, value) {
-  // 更新板块数据（可能在 _rewriteBlocks 或 lastRewrite 中）
   const rw = AppState._rewriteBlocks || AppState.lastRewrite;
-  if (rw && rw.blocks && rw.blocks[idx]) {
-    rw.blocks[idx].rewrite_direction = value;
-  }
+  if (rw && rw.blocks && rw.blocks[idx]) rw.blocks[idx].rewrite_direction = value;
 }
 
-// ============== 板块→镜头级脚本扩展 ==============
+// ============== 板块->镜头级脚本 ==============
 
 async function doExpand() {
   const rw = AppState._rewriteBlocks || AppState.lastRewrite;
   if (!rw || !rw.blocks) return showErr('请先完成板块仿写');
-
   const btn = document.getElementById('btn-expand');
   const status = document.getElementById('expand-status');
-  btn.disabled = true;
-  btn.textContent = '生成中…';
-  status.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center"><div class="spin" style="margin:0 auto 8px"></div>Claude 正在扩展为分镜脚本…</div>';
-
+  btn.disabled = true; btn.textContent = '生成中...';
+  status.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center"><div class="spin" style="margin:0 auto 8px"></div>Claude 正在扩展为分镜脚本...</div>';
   try {
-    // 给原始镜头标注角色
     const shots = AppState._analysisShots || [];
     const bd = AppState._structureBreakdown || [];
-    bd.forEach(b => {
-      (b.shots_included || []).forEach(sn => {
-        const shot = shots.find(x => x.shot_number === sn);
-        if (shot) shot._role = b.element;
-      });
-    });
-
-    const result = await API.expand(
-      shots,
-      bd,
-      rw.blocks,
-      AppState._rwProductName || '',
-      AppState._rwCategory || ''
-    );
-
-    if (result.raw_response) {
-      status.innerHTML = '<div style="color:var(--red);padding:12px">AI 返回格式异常，请重试</div>';
-      btn.disabled = false;
-      btn.textContent = '📋 生成分镜脚本 → Tab 4';
-      return;
-    }
-
-    // 把 expand 结果传给 Tab 4（不覆盖板块数据）
+    bd.forEach(b => { (b.shots_included || []).forEach(sn => { const shot = shots.find(x => x.shot_number === sn); if (shot) shot._role = b.element; }); });
+    const result = await API.expand(shots, bd, rw.blocks, AppState._rwProductName || '', AppState._rwCategory || '');
+    if (result.raw_response) { status.innerHTML = '<div style="color:var(--red);padding:12px">AI 返回格式异常，请重试</div>'; btn.disabled = false; btn.textContent = '生成分镜脚本 -> Tab 4'; return; }
     const expandData = {
-      rewritten_structure: (result.shots || []).map(s => ({
-        ...s,
-        element: s.role || '无',
-        camera: s.camera || { shot_size: '', lighting: [], movement: '', composition: '', style: '' }
-      })),
-      framework: rw.framework || '',
-      formula: rw.formula || ''
+      rewritten_structure: (result.shots || []).map(s => ({ ...s, element: s.role || '无', camera: s.camera || { shot_size: '', lighting: [], movement: '', composition: '', style: '' } })),
+      framework: rw.framework || '', formula: rw.formula || ''
     };
-
-    // 板块数据保留在 _rewriteBlocks，expand 结果存到 lastRewrite 给 Tab 4 用
     AppState._rewriteBlocks = rw;
     AppState.lastRewrite = expandData;
     AppState.t4Initialized = false;
-
-    status.innerHTML = '<div style="color:var(--green);padding:12px;text-align:center">✅ 已生成 ' + (result.shots || []).length + ' 个镜头的分镜脚本，切换到 Tab 4 查看编辑</div>';
-    btn.disabled = false;
-    btn.textContent = '🔄 重新生成分镜脚本';
-
-    // 高亮 Tab 4
+    status.innerHTML = '<div style="color:var(--green);padding:12px;text-align:center">已生成 ' + (result.shots || []).length + ' 个镜头的分镜脚本，切换到 Tab 4 查看编辑</div>';
+    btn.disabled = false; btn.textContent = '重新生成分镜脚本';
     const t4Tab = document.querySelector('[data-tab="t4"]');
-    if (t4Tab) {
-      t4Tab.style.background = 'var(--accentBg)';
-      setTimeout(() => t4Tab.style.background = '', 3000);
-    }
-  } catch (e) {
-    status.innerHTML = '<div style="color:var(--red);padding:12px">❌ ' + esc(e.message) + '</div>';
-    btn.disabled = false;
-    btn.textContent = '📋 生成分镜脚本 → Tab 4';
-  }
+    if (t4Tab) { t4Tab.style.background = 'var(--accentBg)'; setTimeout(() => t4Tab.style.background = '', 3000); }
+  } catch (e) { status.innerHTML = '<div style="color:var(--red);padding:12px">' + esc(e.message) + '</div>'; btn.disabled = false; btn.textContent = '生成分镜脚本 -> Tab 4'; }
 }
 
-// ============== 新框架入库 ==============
+// ============== 框架入库（可编辑后入库） ==============
 
 async function saveNewFramework() {
-  const analysis = AppState.analysisData?.analysis || AppState.analysisData;
-  const ss = analysis?.script_structure || {};
-  const formula = ss.formula || '';
-  const hookType = ss.hook_type || '';
+  const name = (document.getElementById('t3-fw-name')?.value || '').trim();
+  const formula = (document.getElementById('t3-fw-formula')?.value || '').trim();
+  const hookType = (document.getElementById('t3-fw-hook')?.value || '').trim();
+  const logic = (document.getElementById('t3-fw-logic')?.value || '').trim();
+  const scenario = (document.getElementById('t3-fw-scenario')?.value || '').trim();
+  const difficulty = (document.getElementById('t3-fw-diff')?.value || '').trim();
 
-  // 弹窗让用户命名
-  const name = prompt('给这个新框架起个名字：', '');
-  if (!name) return;
-
-  const logic = (ss.structure_breakdown || []).map(b => `[${b.element}] ${b.description || ''}`).join('；');
+  if (!name || !formula) return showErr('框架名称和公式不能为空');
+  hideErr();
 
   const btn = document.getElementById('btn-save-framework');
-  btn.disabled = true;
-  btn.textContent = '入库中…';
+  btn.disabled = true; btn.textContent = '入库中...';
 
   try {
-    await API.createFramework(name, formula, hookType, logic);
-    btn.textContent = '✅ 已入库';
-    btn.style.background = 'var(--greenBg)';
+    await API.createFramework(name, formula, hookType, logic, scenario, difficulty);
+    btn.textContent = '已入库';
     btn.style.borderColor = 'var(--green)';
     btn.style.color = 'var(--green)';
+    // 更新顶部标签
+    const label = document.getElementById('t3-framework-label');
+    if (label) label.textContent = name;
   } catch (e) {
-    btn.disabled = false;
-    btn.textContent = '+ 入框架库';
+    btn.disabled = false; btn.textContent = '入框架库';
     showErr('框架入库失败: ' + e.message);
   }
 }
-
-// ============== 导出 ==============
 
 window.renderTab3 = renderTab3;
 window.doRewrite = doRewrite;

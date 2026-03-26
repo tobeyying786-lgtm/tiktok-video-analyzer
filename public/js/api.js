@@ -1,16 +1,8 @@
 /**
- * api.js — 所有 API 调用封装
+ * api.js — V3.5.4: createFramework 传全部字段
  */
 
 const API = {
-  /**
-   * 分析视频（SSE 流式）
-   * @param {File} file
-   * @param {string} memo - 入库备注（可选）
-   * @param {Function} onStep  - (step, message) 回调
-   * @param {Function} onDone  - (data) 回调
-   * @param {Function} onError - (error) 回调
-   */
   async analyze(file, memo, onStep, onDone, onError) {
     const fd = new FormData();
     fd.append('video', file);
@@ -33,175 +25,65 @@ const API = {
         for (const p of parts) {
           for (const l of p.split('\n')) {
             if (l.startsWith('data: ')) {
-              try {
-                const m = JSON.parse(l.slice(6));
-                onStep(m.step, m.message);
-                if (m.data) final = m.data;
-              } catch (e) { /* skip */ }
+              try { const m = JSON.parse(l.slice(6)); onStep(m.step, m.message); if (m.data) final = m.data; } catch (e) {}
             }
           }
         }
       }
-      // Process remaining buffer
       if (buf.trim()) {
         for (const l of buf.split('\n')) {
           if (l.startsWith('data: ')) {
-            try {
-              const m = JSON.parse(l.slice(6));
-              onStep(m.step, m.message);
-              if (m.data) final = m.data;
-            } catch (e) { /* skip */ }
+            try { const m = JSON.parse(l.slice(6)); onStep(m.step, m.message); if (m.data) final = m.data; } catch (e) {}
           }
         }
       }
       if (!final) throw new Error('未收到分析结果');
       onDone(final);
-    } catch (e) {
-      onError(e);
-    }
+    } catch (e) { onError(e); }
   },
 
-  /**
-   * 改写脚本
-   */
   async rewrite(analysis, newCategory, productName, coreSellingPoints) {
-    const resp = await fetch('/api/rewrite', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ analysis, newCategory, productName, coreSellingPoints })
-    });
+    const resp = await fetch('/api/rewrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ analysis, newCategory, productName, coreSellingPoints }) });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || '改写失败');
     return data.rewrite;
   },
 
-  /**
-   * 板块→镜头级脚本扩展
-   */
   async expand(originalShots, structureBreakdown, rewriteBlocks, productName, category) {
-    const resp = await fetch('/api/expand', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ originalShots, structureBreakdown, rewriteBlocks, productName, category })
-    });
+    const resp = await fetch('/api/expand', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ originalShots, structureBreakdown, rewriteBlocks, productName, category }) });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || '扩展失败');
     return data.expand;
   },
 
-  /**
-   * 写入飞书多维表格（带库选择）
-   */
   async saveToFeishu(analysis, videoCode, videoUrl, filename, libs) {
-    const resp = await fetch('/api/save-to-feishu', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ analysis, videoCode, videoUrl, filename, libs })
-    });
+    const resp = await fetch('/api/save-to-feishu', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ analysis, videoCode, videoUrl, filename, libs }) });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || '写入失败');
     return data;
   },
 
-  /**
-   * 获取视频生成平台列表
-   */
-  async getVideoGenPlatforms() {
-    const resp = await fetch('/api/videogen/platforms');
-    const data = await resp.json();
-    return data.platforms;
-  },
+  async getVideoGenPlatforms() { const resp = await fetch('/api/videogen/platforms'); return (await resp.json()).platforms; },
+  async submitVideoGen(prompt, platform, model, aspectRatio) { const resp = await fetch('/api/videogen/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, platform, model, aspectRatio }) }); const data = await resp.json(); if (!data.success) throw new Error(data.error || '提交失败'); return data; },
+  async getVideoGenStatus(taskKey) { return await (await fetch('/api/videogen/status/' + taskKey)).json(); },
+  async getBgmList() { const resp = await fetch('/api/feishu/bgm'); const data = await resp.json(); if (!data.success) throw new Error(data.error || 'BGM 加载失败'); return data.bgm; },
+  async getFrameworks() { const resp = await fetch('/api/feishu/frameworks'); const data = await resp.json(); if (!data.success) throw new Error(data.error || '框架库加载失败'); return data.frameworks; },
 
-  /**
-   * 提交视频生成任务
-   */
-  async submitVideoGen(prompt, platform, model, aspectRatio) {
-    const resp = await fetch('/api/videogen/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, platform, model, aspectRatio })
-    });
-    const data = await resp.json();
-    if (!data.success) throw new Error(data.error || '提交失败');
-    return data;
-  },
-
-  /**
-   * 查询视频生成状态
-   */
-  async getVideoGenStatus(taskKey) {
-    const resp = await fetch('/api/videogen/status/' + taskKey);
-    return await resp.json();
-  },
-
-  /**
-   * 获取 BGM 库
-   */
-  async getBgmList() {
-    const resp = await fetch('/api/feishu/bgm');
-    const data = await resp.json();
-    if (!data.success) throw new Error(data.error || 'BGM 加载失败');
-    return data.bgm;
-  },
-
-  /**
-   * 获取框架结构库
-   */
-  async getFrameworks() {
-    const resp = await fetch('/api/feishu/frameworks');
-    const data = await resp.json();
-    if (!data.success) throw new Error(data.error || '框架库加载失败');
-    return data.frameworks;
-  },
-
-  /**
-   * 新框架入库
-   */
-  async createFramework(name, formula, hookType, logic) {
+  // V3.5.4: 传全部字段
+  async createFramework(name, formula, hookType, logic, scenario, difficulty) {
     const resp = await fetch('/api/feishu/framework/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, formula, hookType, logic })
+      body: JSON.stringify({ name, formula, hookType, logic, scenario, difficulty })
     });
     const data = await resp.json();
     if (!data.success) throw new Error(data.error || '入库失败');
     return data;
   },
 
-  /**
-   * 健康检查
-   */
-  async healthCheck() {
-    const resp = await fetch('/api/health');
-    return await resp.json();
-  },
-
-  /**
-   * 快速存档 - AI 分析判断入哪个库
-   */
-  async archive(file, memo) {
-    const fd = new FormData();
-    fd.append('video', file);
-    fd.append('memo', memo || '');
-    const resp = await fetch('/api/archive', { method: 'POST', body: fd });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || '存档分析失败');
-    return data;
-  },
-
-  /**
-   * 存档确认入库
-   */
-  async archiveSave(targetLibrary, fields) {
-    const resp = await fetch('/api/archive/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetLibrary, fields })
-    });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || '入库失败');
-    return data;
-  }
+  async healthCheck() { return await (await fetch('/api/health')).json(); },
+  async archive(file, memo) { const fd = new FormData(); fd.append('video', file); fd.append('memo', memo || ''); const resp = await fetch('/api/archive', { method: 'POST', body: fd }); const data = await resp.json(); if (!resp.ok) throw new Error(data.error || '存档分析失败'); return data; },
+  async archiveSave(targetLibrary, fields) { const resp = await fetch('/api/archive/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetLibrary, fields }) }); const data = await resp.json(); if (!resp.ok) throw new Error(data.error || '入库失败'); return data; }
 };
 
 window.API = API;
