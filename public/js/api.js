@@ -88,13 +88,13 @@ const API = {
   },
 
   /**
-   * 写入飞书多维表格
+   * 写入飞书多维表格（带库选择）
    */
-  async saveToFeishu(analysis, videoCode, videoUrl, filename) {
+  async saveToFeishu(analysis, videoCode, videoUrl, filename, libs) {
     const resp = await fetch('/api/save-to-feishu', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ analysis, videoCode, videoUrl, filename })
+      body: JSON.stringify({ analysis, videoCode, videoUrl, filename, libs })
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || '写入失败');

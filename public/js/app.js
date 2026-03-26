@@ -191,57 +191,165 @@ function switchTab(id, el) {
   if (id === 't4') renderTab4();
 }
 
-// ============== 飞书入库 ==============
+// ============== 飞书入库（确认面板模式） ==============
 
-async function saveToFeishu() {
+// 素材库定义
+const SAVE_LIBRARIES = {
+  competitor: { name: '竞品爆款拆解库', color: 'pink' },
+  cta: { name: '号召行动库 CTA', color: 'blue' },
+  painpoint: { name: '痛点需求场景库', color: 'orange' },
+  sellingpt: { name: '卖点画面库', color: 'green' },
+  socialproof: { name: '社会证明库', color: 'amber' },
+  benefit: { name: '权益库', color: 'red' },
+  comment: { name: '爆款评论库', color: 'purple' },
+  bgm: { name: 'BGM情绪库', color: 'slate' }
+};
+
+function saveToFeishu() {
   if (!AppState.analysisData) return showErr('请先完成视频拆解');
-  const btn = document.getElementById('btn-feishu');
-  btn.disabled = true;
-  btn.textContent = '📝 写入中…';
   hideErr();
 
-  const videoCode = prompt('请输入视频编码（可留空）：', '') || '';
+  const a = AppState.analysisData?.analysis || AppState.analysisData;
+  const em = a.extracted_materials || {};
+
+  // 根据分析数据自动建议入哪些库
+  const suggestions = [];
+  suggestions.push({ lib: 'competitor', reason: '拆解分析本身就是竞品研究，记录视频结构和可复用点', checked: true });
+
+  if ((em.hook_scripts || []).length > 0 || (em.cta_scripts || []).length > 0) {
+    const hooks = (em.hook_scripts || []).map(h => h.text).join('；').substring(0, 60);
+    suggestions.push({ lib: 'cta', reason: '提取到钩子/CTA话术：' + (hooks || '有促单话术'), checked: true });
+  }
+  if ((em.pain_points || []).length > 0) {
+    const pts = (em.pain_points || []).map(p => p.user_pain || p.scene).join('；').substring(0, 60);
+    suggestions.push({ lib: 'painpoint', reason: '提取到痛点场景：' + pts, checked: true });
+  }
+  if ((em.selling_points || []).length > 0) {
+    suggestions.push({ lib: 'sellingpt', reason: '提取到卖点画面：' + (em.selling_points || []).length + '个', checked: true });
+  }
+  if ((em.social_proof || []).length > 0) {
+    suggestions.push({ lib: 'socialproof', reason: '提取到社会证明素材：' + (em.social_proof || []).length + '条', checked: true });
+  }
+  if (em.bgm && em.bgm.mood) {
+    suggestions.push({ lib: 'bgm', reason: 'BGM情绪：' + em.bgm.mood + ' - ' + (em.bgm.description || ''), checked: true });
+  }
+
+  AppState._saveSuggestions = suggestions;
+  renderSavePanel(suggestions);
+}
+
+function renderSavePanel(suggestions) {
+  const panel = document.getElementById('save-panel');
+
+  // 库列表
+  let libRows = suggestions.map((s, i) => {
+    const lib = SAVE_LIBRARIES[s.lib];
+    return '<div class="save-lib-row">' +
+      '<input type="checkbox" class="save-lib-check" data-idx="' + i + '"' + (s.checked ? ' checked' : '') + ' onchange="saveToggleLib(' + i + ',this.checked)">' +
+      '<div class="save-lib-info">' +
+        '<div class="save-lib-name"><span class="bg-' + lib.color + '" style="padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;margin-right:6px">' + esc(lib.name) + '</span></div>' +
+        '<div class="save-lib-reason">' + esc(s.reason) + '</div>' +
+        '<div class="save-lib-note"><input type="text" placeholder="补充备注（可选）" data-idx="' + i + '" oninput="saveUpdateNote(' + i + ',this.value)" value="' + esc(s.note || '') + '"></div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  // 添加遗漏库的下拉
+  const existingLibs = suggestions.map(s => s.lib);
+  const missingLibs = Object.entries(SAVE_LIBRARIES).filter(([k]) => !existingLibs.includes(k));
+  let addOptions = '<option value="">— 选择要添加的库 —</option>';
+  missingLibs.forEach(([k, v]) => {
+    addOptions += '<option value="' + k + '">' + v.name + '</option>';
+  });
+
+  panel.innerHTML = '<div class="archive-panel">' +
+    '<h3>📝 入库确认</h3>' +
+    '<div style="font-size:13px;color:var(--text3);margin-bottom:16px">AI 根据分析结果建议入以下素材库，你可以勾选/取消/添加/写备注</div>' +
+    '<div id="save-lib-list">' + libRows + '</div>' +
+    (missingLibs.length > 0 ? '<div class="save-add-row">' +
+      '<select class="t4-select" style="width:auto;min-width:200px" id="save-add-select">' + addOptions + '</select>' +
+      '<input type="text" placeholder="入库理由" id="save-add-reason" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit">' +
+      '<button class="btn-sm" style="padding:6px 14px" onclick="saveAddLib()">添加</button>' +
+    '</div>' : '') +
+    '<div class="archive-actions">' +
+      '<button class="btn-go" style="flex:1" id="btn-save-confirm" onclick="saveConfirm()">✅ 确认入库（' + suggestions.filter(s => s.checked).length + ' 个库）</button>' +
+      '<button class="btn-sec" onclick="savePanelClose()">取消</button>' +
+    '</div>' +
+    '<div id="save-status"></div>' +
+  '</div>';
+
+  panel.style.display = 'block';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function saveToggleLib(idx, checked) {
+  if (AppState._saveSuggestions[idx]) {
+    AppState._saveSuggestions[idx].checked = checked;
+    const count = AppState._saveSuggestions.filter(s => s.checked).length;
+    const btn = document.getElementById('btn-save-confirm');
+    if (btn) btn.textContent = '✅ 确认入库（' + count + ' 个库）';
+  }
+}
+
+function saveUpdateNote(idx, value) {
+  if (AppState._saveSuggestions[idx]) {
+    AppState._saveSuggestions[idx].note = value;
+  }
+}
+
+function saveAddLib() {
+  const sel = document.getElementById('save-add-select');
+  const reason = document.getElementById('save-add-reason');
+  const libKey = sel ? sel.value : '';
+  const reasonText = reason ? reason.value.trim() : '';
+  if (!libKey) return;
+
+  AppState._saveSuggestions.push({
+    lib: libKey,
+    reason: reasonText || '手动添加',
+    note: '',
+    checked: true
+  });
+  renderSavePanel(AppState._saveSuggestions);
+}
+
+async function saveConfirm() {
+  const selected = AppState._saveSuggestions.filter(s => s.checked);
+  if (selected.length === 0) return showErr('请至少选择一个库');
+
+  const btn = document.getElementById('btn-save-confirm');
+  const status = document.getElementById('save-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ 写入中…';
+  status.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center"><div class="spin" style="margin:0 auto 8px"></div>正在写入 ' + selected.length + ' 个库…</div>';
 
   try {
     const analysis = AppState.analysisData?.analysis || AppState.analysisData;
     const videoUrl = AppState.analysisData?.videoUrl || '';
     const filename = AppState.curFile ? AppState.curFile.name : '';
-    const data = await API.saveToFeishu(analysis, videoCode, videoUrl, filename);
+    const libs = selected.map(s => ({ lib: s.lib, note: s.note || '' }));
+
+    const data = await API.saveToFeishu(analysis, '', videoUrl, filename, libs);
     const saved = data.results?.saved?.length || 0;
-    const errors = data.results?.errors?.length || 0;
-    btn.textContent = '✅ 已写入 ' + saved + ' 条';
-    if (errors > 0)
-      showErr('部分写入失败：' + data.results.errors.map(e => e.table + ': ' + e.error).join('; '));
-    setTimeout(() => { btn.textContent = '📝 写入飞书多维表格'; btn.disabled = false; }, 3000);
+    const errors = data.results?.errors || [];
+
+    let resultHtml = '<div style="padding:12px;text-align:center">';
+    if (saved > 0) resultHtml += '<div style="color:var(--green);font-weight:700;margin-bottom:8px">✅ 成功写入 ' + saved + ' 条记录</div>';
+    if (errors.length > 0) resultHtml += '<div style="color:var(--red);font-size:13px">' + errors.map(e => e.table + ': ' + e.error).join('<br>') + '</div>';
+    resultHtml += '</div>';
+    status.innerHTML = resultHtml;
+
+    btn.textContent = '✅ 入库完成';
+    setTimeout(() => { btn.disabled = false; btn.textContent = '✅ 确认入库（' + selected.length + ' 个库）'; }, 3000);
   } catch (e) {
-    showErr('飞书写入失败: ' + e.message);
-    btn.textContent = '📝 写入飞书多维表格';
+    status.innerHTML = '<div style="color:var(--red);padding:12px">❌ ' + esc(e.message) + '</div>';
     btn.disabled = false;
+    btn.textContent = '✅ 确认入库';
   }
 }
 
-// ============== 重置 ==============
-
-function resetAll() {
-  AppState.reset();
-  document.getElementById('page-upload').style.display = '';
-  document.getElementById('page-result').style.display = 'none';
-  document.getElementById('btn-reset').style.display = 'none';
-  document.getElementById('hdr-sub').textContent = 'AI驱动的视频结构分析';
-  hideErr(); hideProg();
-
-  const uz = document.getElementById('upzone');
-  uz.innerHTML = '<span class="fb" onclick="event.stopPropagation();document.getElementById(\'fileIn\').click()">未选择任何文件</span>' +
-    '<div class="up-arrow"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" stroke="var(--text3)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
-    '<div class="up-text">拖拽视频到这里，或点击上传</div>' +
-    '<div class="up-hint">支持 MP4, MOV, AVI, WebM 格式，最大 200MB</div>' +
-    '<input type="file" id="fileIn" accept="video/*" style="display:none">';
-  document.getElementById('fileIn').addEventListener('change', () => {
-    if (document.getElementById('fileIn').files.length) {
-      AppState.curFile = document.getElementById('fileIn').files[0];
-      showSel();
-    }
-  });
+function savePanelClose() {
+  document.getElementById('save-panel').style.display = 'none';
 }
 
 // 导出到全局
@@ -249,144 +357,9 @@ window.showSel = showSel;
 window.startAnalysis = startAnalysis;
 window.switchTab = switchTab;
 window.saveToFeishu = saveToFeishu;
+window.saveToggleLib = saveToggleLib;
+window.saveUpdateNote = saveUpdateNote;
+window.saveAddLib = saveAddLib;
+window.saveConfirm = saveConfirm;
+window.savePanelClose = savePanelClose;
 window.resetAll = resetAll;
-
-// ============== 快速存档 ==============
-
-function startArchive() {
-  if (!AppState.curFile) return showErr('请先上传视频文件');
-  hideErr();
-  // 显示备注输入框
-  document.getElementById('archive-memo-box').style.display = 'block';
-  document.getElementById('archive-memo').focus();
-}
-
-function doArchive() {
-  if (!AppState.curFile) return showErr('请先上传视频文件');
-  hideErr();
-
-  const memo = document.getElementById('archive-memo').value.trim();
-  const resultDiv = document.getElementById('archive-result');
-  resultDiv.style.display = 'block';
-  resultDiv.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text3)"><div class="spin" style="margin:0 auto 10px"></div>Gemini 正在分析素材类型…</div>';
-
-  // 隐藏备注栏
-  document.getElementById('archive-memo-box').style.display = 'none';
-
-  API.archive(AppState.curFile, memo).then(data => {
-    renderArchiveResult(data);
-  }).catch(e => {
-    resultDiv.innerHTML = '<div style="color:var(--red);padding:12px">❌ ' + esc(e.message) + '</div>';
-  });
-}
-
-function renderArchiveResult(data) {
-  const result = data.archive;
-  const libraries = data.libraries;
-  const resultDiv = document.getElementById('archive-result');
-
-  // 前端补救 JSON 解析
-  if (result.raw_response) {
-    try {
-      const cleaned = result.raw_response.replace(/`{3,}[\w]*\s*/g, '').trim();
-      const start = cleaned.indexOf('{');
-      const end = cleaned.lastIndexOf('}');
-      if (start !== -1 && end > start) {
-        const parsed = JSON.parse(cleaned.substring(start, end + 1));
-        if (parsed.target_library) {
-          return renderArchiveResult({ archive: parsed, libraries });
-        }
-      }
-    } catch (e) { /* fall through */ }
-    resultDiv.innerHTML = '<div style="color:var(--red);padding:12px">AI 返回格式异常，请重试</div>';
-    return;
-  }
-
-  const targetLib = result.target_library || '';
-  const confidence = result.confidence || '';
-  const reason = result.reason || '';
-  const fields = result.fields || {};
-
-  // 存到 state 供确认入库用
-  AppState._archiveTarget = targetLib;
-  AppState._archiveFields = { ...fields };
-
-  // 生成库选择下拉
-  let libOptions = Object.entries(libraries).map(([k, v]) =>
-    '<option value="' + k + '"' + (k === targetLib ? ' selected' : '') + '>' + v.name + '</option>'
-  ).join('');
-
-  // 生成字段编辑表单
-  const lib = libraries[targetLib];
-  let fieldsHtml = '';
-  if (lib) {
-    lib.fields.forEach(f => {
-      const val = fields[f] || '';
-      fieldsHtml += '<div class="archive-field"><label>' + esc(f) + '</label>' +
-        (val.length > 50
-          ? '<textarea rows="2" data-field="' + esc(f) + '" oninput="archiveUpdateField(this)">' + esc(val) + '</textarea>'
-          : '<input type="text" data-field="' + esc(f) + '" oninput="archiveUpdateField(this)" value="' + esc(val) + '">') +
-        '</div>';
-    });
-  }
-
-  resultDiv.innerHTML = '<div class="archive-panel">' +
-    '<h3>📥 存档结果</h3>' +
-    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">' +
-      '<span>目标库：</span>' +
-      '<select class="t4-select" style="width:auto;min-width:200px" id="archive-lib-select" onchange="archiveChangeLib(this.value)">' + libOptions + '</select>' +
-      '<span class="archive-lib-tag bg-green">置信度：' + esc(confidence) + '</span>' +
-    '</div>' +
-    '<div style="font-size:13px;color:var(--text3);margin-bottom:16px">AI 判断理由：' + esc(reason) + '</div>' +
-    '<div id="archive-fields">' + fieldsHtml + '</div>' +
-    '<div class="archive-actions">' +
-      '<button class="btn-go" style="flex:1" onclick="archiveConfirm()">✅ 确认入库</button>' +
-      '<button class="btn-sec" onclick="archiveCancel()">取消</button>' +
-    '</div>' +
-    '<div id="archive-save-status"></div>' +
-  '</div>';
-}
-
-function archiveUpdateField(el) {
-  const field = el.dataset.field;
-  if (AppState._archiveFields) {
-    AppState._archiveFields[field] = el.value;
-  }
-}
-
-function archiveChangeLib(newLib) {
-  // TODO: 后续可以让 AI 重新按新库字段格式填写
-  // 目前先清空字段让用户手动填
-  AppState._archiveTarget = newLib;
-  AppState._archiveFields = {};
-  // 这里暂不重新渲染，用户可以直接修改字段
-}
-
-async function archiveConfirm() {
-  const target = AppState._archiveTarget;
-  const fields = AppState._archiveFields;
-  if (!target || !fields) return showErr('请先完成存档分析');
-
-  const status = document.getElementById('archive-save-status');
-  status.innerHTML = '<div style="color:var(--text3);padding:8px;text-align:center"><div class="spin" style="margin:0 auto 6px"></div>写入飞书…</div>';
-
-  try {
-    const data = await API.archiveSave(target, fields);
-    status.innerHTML = '<div style="color:var(--green);padding:8px;text-align:center">✅ 已成功入库到「' + esc(data.library) + '」</div>';
-  } catch (e) {
-    status.innerHTML = '<div style="color:var(--red);padding:8px">❌ ' + esc(e.message) + '</div>';
-  }
-}
-
-function archiveCancel() {
-  document.getElementById('archive-result').style.display = 'none';
-  document.getElementById('archive-memo-box').style.display = 'none';
-  document.getElementById('btn-archive').textContent = '📥 直接存档';
-}
-
-window.startArchive = startArchive;
-window.doArchive = doArchive;
-window.archiveUpdateField = archiveUpdateField;
-window.archiveChangeLib = archiveChangeLib;
-window.archiveConfirm = archiveConfirm;
-window.archiveCancel = archiveCancel;

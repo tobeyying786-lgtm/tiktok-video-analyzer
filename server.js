@@ -417,52 +417,140 @@ ${rewriteBlocks.map(b => `[${b.element}]（对应原视频镜头 ${(b.original_s
   } catch (error) { console.error('扩展失败:', error); res.status(500).json({ error: '扩展失败: ' + error.message }); }
 });
 
-// === API: Feishu Save ===
+// === API: Feishu Save (入库确认面板模式) ===
 app.post('/api/save-to-feishu', async (req, res) => {
   try {
     if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) return res.status(500).json({ error: '飞书凭证未配置' });
-    const { analysis, videoCode, videoUrl, filename } = req.body;
+    const { analysis, videoCode, videoUrl, filename, libs } = req.body;
     if (!analysis) return res.status(400).json({ error: '缺少分析数据' });
     const a = analysis, ov = a.video_overview||{}, ss = a.script_structure||{}, em = a.extracted_materials||{};
     const results = { saved: [], errors: [] };
+    const videoLink = videoUrl ? { link: videoUrl, text: videoUrl } : undefined;
+    const source = filename || '未命名';
+
+    // 如果前端传了 libs 列表，只写入选中的库
+    const selectedLibs = (libs || []).map(l => l.lib);
+    const shouldSave = (lib) => !libs || selectedLibs.includes(lib);
+    const getNote = (lib) => { const l = (libs || []).find(x => x.lib === lib); return l ? l.note : ''; };
 
     // 1. 竞品爆款拆解库
-    try {
-      const hooks = (em.hook_scripts||[]).map(h=>h.text).join('\n');
-      const reuse = typeof a.reusable_points==='string' ? a.reusable_points : JSON.stringify(a.reusable_points||'');
-      const bgm = em.bgm ? `${em.bgm.mood||''} - ${em.bgm.description||''}` : '';
-      await feishuCreate(FEISHU_CONFIG.tables.competitor, {
-        '视频标题/描述': filename||'未命名', '视频编码': videoCode||'', '钩子话术': hooks,
-        '视频结构': matchStructure(ss.framework), '使用BGM': bgm, '可复用点': reuse,
-        '拆解状态': '已拆解', '拆解时间': Date.now(),
-        ...(videoUrl ? { '视频文件地址': { link: videoUrl, text: videoUrl } } : {})
-      });
-      results.saved.push({ table: '竞品爆款拆解库' });
-    } catch(e) { results.errors.push({ table: '竞品爆款拆解库', error: e.message }); }
+    if (shouldSave('competitor')) {
+      try {
+        const hooks = (em.hook_scripts||[]).map(h=>h.text).join('\n');
+        const reuse = typeof a.reusable_points==='string' ? a.reusable_points : JSON.stringify(a.reusable_points||'');
+        const bgm = em.bgm ? `${em.bgm.mood||''} - ${em.bgm.description||''}` : '';
+        const note = getNote('competitor');
+        await feishuCreate(FEISHU_CONFIG.tables.competitor, {
+          '视频标题/描述': source, '视频编码': videoCode||'', '钩子话术': hooks,
+          '视频结构': matchStructure(ss.framework), '使用BGM': bgm, '可复用点': reuse,
+          '拆解状态': '已拆解', '拆解时间': Date.now(),
+          ...(note ? { '入库备注': note } : {}),
+          ...(videoLink ? { '视频文件地址': videoLink } : {})
+        });
+        results.saved.push({ table: '竞品爆款拆解库' });
+      } catch(e) { results.errors.push({ table: '竞品爆款拆解库', error: e.message }); }
+    }
 
     // 2. CTA库
-    const allCTA = [...(em.hook_scripts||[]), ...(em.cta_scripts||[]).map(c=>({text:c.text,type:'结尾',action_type:'稀缺促单'}))];
-    for (const c of allCTA) {
-      try { await feishuCreate(FEISHU_CONFIG.tables.cta, { 'CTA话术（英文）': c.text||'', '中文翻译': c.text||'', '视频阶段': matchStage(c.type), '行动类型': matchAction(c.action_type), '话术逻辑': `拆解提取-${filename||''}` }); results.saved.push({ table: 'CTA库' }); }
-      catch(e) { results.errors.push({ table: 'CTA库', error: e.message }); }
+    if (shouldSave('cta')) {
+      const allCTA = [...(em.hook_scripts||[]), ...(em.cta_scripts||[]).map(c=>({text:c.text,type:'结尾',action_type:'稀缺促单'}))];
+      for (const c of allCTA) {
+        try {
+          await feishuCreate(FEISHU_CONFIG.tables.cta, {
+            'CTA话术（英文）': c.text||'', '中文翻译': c.text||'',
+            '视频阶段': matchStage(c.type), '行动类型': matchAction(c.action_type),
+            '话术逻辑': `拆解提取-${source}`,
+            '配合画面': c.scene_description || '',
+            ...(getNote('cta') ? { '入库备注': getNote('cta') } : {})
+          });
+          results.saved.push({ table: 'CTA库' });
+        } catch(e) { results.errors.push({ table: 'CTA库', error: e.message }); }
+      }
     }
 
     // 3. 痛点库
-    for (const p of (em.pain_points||[])) {
-      try { await feishuCreate(FEISHU_CONFIG.tables.painpoint, { '场景名称': p.scene||p.user_pain||'', '用户痛点': p.user_pain||'', '产品切入点': p.product_solution||'', '来源': 'TikTok爆款' }); results.saved.push({ table: '痛点库' }); }
-      catch(e) { results.errors.push({ table: '痛点库', error: e.message }); }
+    if (shouldSave('painpoint')) {
+      for (const p of (em.pain_points||[])) {
+        try {
+          await feishuCreate(FEISHU_CONFIG.tables.painpoint, {
+            '场景名称': p.scene||p.user_pain||'',
+            '场景分类': p.scene_category || '',
+            '用户痛点': p.user_pain||'',
+            '情绪关键词': (p.emotion_keywords||[]).join('、'),
+            '产品切入点': p.product_solution||'',
+            '来源': 'TikTok爆款',
+            '关联视频链接': videoLink || '',
+            ...(getNote('painpoint') ? { '入库备注': getNote('painpoint') } : {})
+          });
+          results.saved.push({ table: '痛点库' });
+        } catch(e) { results.errors.push({ table: '痛点库', error: e.message }); }
+      }
     }
 
     // 4. 卖点画面库
-    for (const s of (em.selling_points||[])) {
-      try { await feishuCreate(FEISHU_CONFIG.tables.sellingpt, { '拍摄说明': s.shooting_notes||s.description||'', '画面类型': s.visual_type||'', '作用': s.description||'' }); results.saved.push({ table: '卖点库' }); }
-      catch(e) { results.errors.push({ table: '卖点库', error: e.message }); }
+    if (shouldSave('sellingpt')) {
+      for (const s of (em.selling_points||[])) {
+        try {
+          await feishuCreate(FEISHU_CONFIG.tables.sellingpt, {
+            '拍摄说明': s.shooting_notes||s.description||'',
+            '画面类型': s.visual_type||'',
+            '作用': s.description||'',
+            '适配视频阶段': s.stage || '',
+            ...(getNote('sellingpt') ? { '入库备注': getNote('sellingpt') } : {})
+          });
+          results.saved.push({ table: '卖点库' });
+        } catch(e) { results.errors.push({ table: '卖点库', error: e.message }); }
+      }
     }
 
     // 5. 社会证明库
-    for (const s of (em.social_proof||[])) {
-      try { await feishuCreate(FEISHU_CONFIG.tables.socialproof, { '证明类型': s.type||'', '素材名称': s.content||'', '使用建议': `拆解提取-${filename||''}` }); results.saved.push({ table: '社会证明库' }); }
-      catch(e) { results.errors.push({ table: '社会证明库', error: e.message }); }
+    if (shouldSave('socialproof')) {
+      for (const s of (em.social_proof||[])) {
+        try {
+          await feishuCreate(FEISHU_CONFIG.tables.socialproof, {
+            '证明类型': s.type||'',
+            '素材名称': s.content||'',
+            '信任强度': s.strength || '',
+            '使用建议': `拆解提取-${source}`,
+            ...(getNote('socialproof') ? { '入库备注': getNote('socialproof') } : {})
+          });
+          results.saved.push({ table: '社会证明库' });
+        } catch(e) { results.errors.push({ table: '社会证明库', error: e.message }); }
+      }
+    }
+
+    // 6. 权益库
+    if (shouldSave('benefit')) {
+      for (const c of (em.cta_scripts||[])) {
+        if (c.incentive) {
+          try {
+            await feishuCreate(FEISHU_CONFIG.tables.benefit, {
+              '权益名称': c.incentive||'',
+              '权益类型': '',
+              '权益描述': c.text||'',
+              '适用场景': '带货促单',
+              ...(getNote('benefit') ? { '入库备注': getNote('benefit') } : {})
+            });
+            results.saved.push({ table: '权益库' });
+          } catch(e) { results.errors.push({ table: '权益库', error: e.message }); }
+        }
+      }
+    }
+
+    // 7. 爆款评论库 — 暂无自动提取数据，跳过
+    // 8. BGM情绪库
+    if (shouldSave('bgm') && em.bgm && em.bgm.mood) {
+      try {
+        await feishuCreate(FEISHU_CONFIG.tables.bgm, {
+          'BGM名称': em.bgm.name || em.bgm.description || '待识别',
+          '情绪类型': em.bgm.mood||'',
+          '适用内容': ss.framework || '',
+          '特征描述': em.bgm.description||'',
+          '关联视频链接': videoLink || '',
+          ...(getNote('bgm') ? { '入库备注': getNote('bgm') } : {})
+        });
+        results.saved.push({ table: 'BGM库' });
+      } catch(e) { results.errors.push({ table: 'BGM库', error: e.message }); }
     }
 
     res.json({ success: results.errors.length===0, message: `写入完成：${results.saved.length}条成功${results.errors.length>0?'，'+results.errors.length+'条失败':''}`, results });
