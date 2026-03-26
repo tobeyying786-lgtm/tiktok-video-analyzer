@@ -82,12 +82,16 @@
 <div id="page-upload">
   <div class="upload-zone" id="upzone"><span class="fb" onclick="event.stopPropagation();document.getElementById('fileIn').click()">未选择任何文件</span><div class="up-arrow"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div><div class="up-text">拖拽视频到这里，或点击上传</div><div class="up-hint">支持 MP4, MOV, AVI, WebM 格式，最大 200MB</div><input type="file" id="fileIn" accept="video/*"></div>
   <div class="feat-grid"><div class="feat"><div class="fi">📷</div><div><h3>智能镜头拆解</h3><p>自动识别场景切换，提取关键帧截图</p></div></div><div class="feat"><div class="fi">📊</div><div><h3>数据指标分析</h3><p>产品露出时长、首现时间等关键指标</p></div></div><div class="feat"><div class="fi">📋</div><div><h3>分镜脚本生成</h3><p>生成完整分镜表格，一键导出</p></div></div><div class="feat"><div class="fi">🔄</div><div><h3>跨品类改编</h3><p>智能改编脚本，适配不同产品</p></div></div></div>
-  <div style="display:flex;gap:12px;margin-bottom:8px">
-    <button class="btn-go" id="btn-go" onclick="startAnalysis()" style="flex:1">⚡ 开始拆解分析</button>
-    <button class="btn-go" id="btn-archive" onclick="startArchive()" style="flex:0 0 auto;background:linear-gradient(135deg,var(--orange),#e67e22);padding:15px 28px">📥 直接存档</button>
+  <div style="display:flex;gap:12px;margin-bottom:12px">
+    <button class="btn-go" id="btn-go" onclick="startAnalysis()" style="flex:3">⚡ 开始拆解分析</button>
+    <button class="btn-go" id="btn-archive" onclick="startArchive()" style="flex:2;background:linear-gradient(135deg,#e67e22,#f39c12);font-size:15px">📥 直接存档到素材库</button>
   </div>
   <div id="archive-memo-box" style="display:none;margin-bottom:12px">
-    <input type="text" id="archive-memo" placeholder="写一句备注：为什么选这条素材？（可选）" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;font-size:14px;color:var(--text);font-family:inherit">
+    <div style="display:flex;gap:10px;align-items:center">
+      <input type="text" id="archive-memo" placeholder="备注：为什么选这条素材？（可选）" style="flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;font-size:14px;color:var(--text);font-family:inherit">
+      <button class="btn-go" onclick="doArchive()" style="flex:0 0 auto;padding:12px 24px;font-size:14px">确认存档</button>
+      <button class="btn-sec" onclick="archiveCancel()" style="padding:12px 16px;font-size:13px">取消</button>
+    </div>
   </div>
   <div id="archive-result" style="display:none"></div>
   <div class="prog" id="prog"><div class="prog-card"><div class="prog-title"><div class="spin"></div><span id="prog-msg">分析中…</span></div><div class="prog-list" id="prog-list"></div></div></div>

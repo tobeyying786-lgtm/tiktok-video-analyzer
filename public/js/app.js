@@ -256,33 +256,27 @@ window.resetAll = resetAll;
 function startArchive() {
   if (!AppState.curFile) return showErr('请先上传视频文件');
   hideErr();
-
   // 显示备注输入框
-  const memoBox = document.getElementById('archive-memo-box');
-  if (memoBox.style.display === 'none') {
-    memoBox.style.display = 'block';
-    document.getElementById('archive-memo').focus();
-    document.getElementById('btn-archive').textContent = '📥 确认存档';
-    return;
-  }
+  document.getElementById('archive-memo-box').style.display = 'block';
+  document.getElementById('archive-memo').focus();
+}
 
-  // 第二次点击：开始存档
+function doArchive() {
+  if (!AppState.curFile) return showErr('请先上传视频文件');
+  hideErr();
+
   const memo = document.getElementById('archive-memo').value.trim();
-  const btn = document.getElementById('btn-archive');
-  btn.disabled = true;
-  btn.textContent = '⏳ AI 分析中…';
-
   const resultDiv = document.getElementById('archive-result');
   resultDiv.style.display = 'block';
-  resultDiv.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)"><div class="spin" style="margin:0 auto 10px"></div>Gemini 正在分析素材类型…</div>';
+  resultDiv.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text3)"><div class="spin" style="margin:0 auto 10px"></div>Gemini 正在分析素材类型…</div>';
+
+  // 隐藏备注栏
+  document.getElementById('archive-memo-box').style.display = 'none';
 
   API.archive(AppState.curFile, memo).then(data => {
     renderArchiveResult(data);
   }).catch(e => {
     resultDiv.innerHTML = '<div style="color:var(--red);padding:12px">❌ ' + esc(e.message) + '</div>';
-  }).finally(() => {
-    btn.disabled = false;
-    btn.textContent = '📥 直接存档';
   });
 }
 
@@ -391,6 +385,7 @@ function archiveCancel() {
 }
 
 window.startArchive = startArchive;
+window.doArchive = doArchive;
 window.archiveUpdateField = archiveUpdateField;
 window.archiveChangeLib = archiveChangeLib;
 window.archiveConfirm = archiveConfirm;
