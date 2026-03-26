@@ -214,16 +214,17 @@ function renderSavePanel(suggestions) {
   const memo = AppState._analyzeMemo || '';
   const memoHtml = memo ? '<div style="background:var(--accentBg);border:1px solid rgba(58,176,158,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--accent2)">分析时的入库备注: ' + esc(memo) + '</div>' : '';
 
-  // 竞品拆解库 — 完整显示，不截断
+  // 竞品拆解库 — 分段换行显示
   const a = AppState.analysisData?.analysis || AppState.analysisData;
   const ce = a.competitor_entry || {};
-  const autoSaveHtml = '<div style="background:var(--pinkBg);border:1px solid rgba(236,72,153,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--pink);line-height:1.8">' +
-    '<strong>竞品爆款拆解库</strong> -- 每次拆解自动入库\n' +
-    (ce.title ? '\n标题: ' + esc(ce.title) : '') +
-    (ce.hook_script ? '\n钩子: ' + esc(ce.hook_script) : '') +
-    (ce.reusable_points ? '\n可复用: ' + esc(ce.reusable_points) : '') +
+  const autoSaveHtml = '<div style="background:var(--pinkBg);border:1px solid rgba(236,72,153,0.2);border-radius:8px;padding:14px 16px;margin-bottom:16px;font-size:13px;color:var(--pink);line-height:1.8">' +
+    '<div style="font-weight:700;margin-bottom:8px">竞品爆款拆解库 -- 每次拆解自动入库</div>' +
+    (ce.title ? '<div style="margin-bottom:6px"><span style="color:var(--text3)">标题:</span> ' + esc(ce.title) + '</div>' : '') +
+    (ce.hook_script ? '<div style="margin-bottom:6px"><span style="color:var(--text3)">钩子:</span> ' + esc(ce.hook_script) + '</div>' : '') +
+    (ce.reusable_points ? '<div><span style="color:var(--text3)">可复用:</span> ' + esc(ce.reusable_points) + '</div>' : '') +
   '</div>';
 
+  // 每条入库理由改为可编辑textarea + 加号新增行
   let libRows = suggestions.map((s, i) => {
     const lib = SAVE_LIBRARIES[s.lib];
     if (!lib) return '';
@@ -231,8 +232,8 @@ function renderSavePanel(suggestions) {
       '<input type="checkbox" class="save-lib-check" data-idx="' + i + '"' + (s.checked ? ' checked' : '') + ' onchange="saveToggleLib(' + i + ',this.checked)">' +
       '<div class="save-lib-info">' +
         '<div class="save-lib-name"><span class="bg-' + lib.color + '" style="padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;margin-right:6px">' + esc(lib.name) + '</span></div>' +
-        '<div class="save-lib-reason" style="white-space:pre-line;line-height:1.7">' + esc(s.reason) + '</div>' +
-        '<div class="save-lib-note"><input type="text" placeholder="补充入库理由（可选）" data-idx="' + i + '" oninput="saveUpdateNote(' + i + ',this.value)" value="' + esc(s.note || '') + '"></div>' +
+        '<textarea class="save-lib-textarea" data-idx="' + i + '" oninput="saveUpdateReason(' + i + ',this.value)" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--text);font-family:inherit;line-height:1.7;resize:vertical;min-height:60px">' + esc(s.reason) + '</textarea>' +
+        '<button class="btn-sm" style="margin-top:4px;padding:3px 10px;font-size:11px" onclick="saveAddLine(' + i + ')">+ 新增一行</button>' +
       '</div>' +
     '</div>';
   }).join('');
@@ -265,7 +266,18 @@ function saveToggleLib(idx, checked) {
     if (btn) btn.textContent = '确认入库（' + count + ' 个库）';
   }
 }
-function saveUpdateNote(idx, value) { if (AppState._saveSuggestions[idx]) AppState._saveSuggestions[idx].note = value; }
+function saveUpdateReason(idx, value) {
+  if (AppState._saveSuggestions[idx]) AppState._saveSuggestions[idx].reason = value;
+}
+
+function saveAddLine(idx) {
+  const textarea = document.querySelector('.save-lib-textarea[data-idx="' + idx + '"]');
+  if (textarea) {
+    textarea.value += '\n';
+    textarea.focus();
+    textarea.selectionStart = textarea.value.length;
+  }
+}
 
 function saveAddLib() {
   const sel = document.getElementById('save-add-select'), reason = document.getElementById('save-add-reason');
@@ -304,6 +316,6 @@ async function saveConfirm() {
 function savePanelClose() { document.getElementById('save-panel').style.display = 'none'; }
 
 window.showSel = showSel; window.startAnalysis = startAnalysis; window.switchTab = switchTab;
-window.saveToFeishu = saveToFeishu; window.saveToggleLib = saveToggleLib; window.saveUpdateNote = saveUpdateNote;
-window.saveAddLib = saveAddLib; window.saveConfirm = saveConfirm; window.savePanelClose = savePanelClose;
+window.saveToFeishu = saveToFeishu; window.saveToggleLib = saveToggleLib; window.saveUpdateReason = saveUpdateReason;
+window.saveAddLine = saveAddLine; window.saveAddLib = saveAddLib; window.saveConfirm = saveConfirm; window.savePanelClose = savePanelClose;
 window.resetAll = resetAll;

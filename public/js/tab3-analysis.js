@@ -65,7 +65,7 @@ function renderTab3(a, ss, shots) {
           '</select></div>' +
       '</div>' +
       '<div style="margin-bottom:8px"><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">核心逻辑</label>' +
-        '<textarea id="t3-fw-logic" rows="2" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text);font-family:inherit;resize:vertical">' + esc(isNewFramework && newInfo ? newInfo.logic || '' : bd.map(b => '[' + b.element + '] ' + (b.description || '')).join('; ')) + '</textarea></div>' +
+        '<textarea id="t3-fw-logic" rows="5" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text);font-family:inherit;resize:vertical">' + esc(isNewFramework && newInfo ? newInfo.logic || '' : bd.map(b => '[' + b.element + '] ' + (b.description || '')).join('; ')) + '</textarea></div>' +
       '<div style="margin-bottom:10px"><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">适用场景</label>' +
         '<input type="text" id="t3-fw-scenario" value="' + esc(isNewFramework && newInfo ? newInfo.scenario || '' : '') + '" placeholder="适合什么品类/阶段使用" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text);font-family:inherit"></div>' +
       '<button class="btn-sm" id="btn-save-framework" onclick="saveNewFramework()" style="padding:6px 16px">' + (isNewFramework ? '入框架库（新框架）' : '更新到框架库') + '</button>' +

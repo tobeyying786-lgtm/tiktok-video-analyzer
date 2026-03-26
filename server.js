@@ -154,6 +154,24 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
       }
     } catch (e) { console.error('框架库读取失败:', e.message); }
 
+    // ★ V3.5.4b: 动态读取CTA行动类型选项
+    let ctaActionTypes = '痛点共鸣/提问触发/结果前置/反常识/数字可信/场景代入/产品演示/对比引导/用户证言/稀缺促单/损失厌恶/社交证明/直接指令/权益利诱/对比锚定';
+    try {
+      if (FEISHU_APP_ID && FEISHU_APP_SECRET) {
+        const token = await getFeishuToken();
+        const fieldUrl = `https://open.feishu.cn/open-apis/bitable/v1/apps/${FEISHU_CONFIG.app_token}/tables/${FEISHU_CONFIG.tables.cta}/fields`;
+        const fieldResp = await fetch(fieldUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+        const fieldData = await fieldResp.json();
+        if (fieldData.code === 0 && fieldData.data?.items) {
+          const actionField = fieldData.data.items.find(f => f.field_name === '行动类型');
+          if (actionField?.property?.options) {
+            ctaActionTypes = actionField.property.options.map(o => o.name).join('/');
+            console.log('[动态读取] CTA行动类型:', ctaActionTypes);
+          }
+        }
+      }
+    } catch (e) { console.error('CTA行动类型读取失败，使用默认值:', e.message); }
+
     // 框架注入：完整核心逻辑，不截断
     const frameworkRules = frameworkList.length > 0
       ? frameworkList.map(f => `### ${f.name}\n- 公式：${f.formula}\n- 钩子类型：${f.hookType}\n- 核心逻辑：${f.logic}\n- 适用场景：${f.scenario}\n- 难度：${f.difficulty} | 层级：${f.level}`).join('\n\n')
@@ -197,6 +215,11 @@ ${ffprobeHint}${memoHint}
 ${frameworkRules}
 
 判定逻辑：看结构顺序（停病药信买的出现顺序），不看内容品类。分型归入母框架。全新结构填"新框架"。
+
+## 公式格式规范
+- 允许用括号标注步骤的变体方式，跟框架库一致，如：停(好奇)、停(真实场景)、停(冲突)
+- 禁止用括号标注嵌套位置关系，如 信(in病) 是错误写法
+- 如果某个步骤穿插在另一个步骤里（比如引用权威数据穿插在痛点阐述中），公式按实际出现的时间顺序写，在核心逻辑的文字描述中说明穿插关系
 
 ## ★★★ 核心概念：停病药信买 与 素材库的对应关系 ★★★
 
@@ -276,24 +299,50 @@ ${frameworkRules}
 
 ## 各素材库详细填写标准
 
-### CTA 号召行动库（对应「停」和「买」）
-核心：话术内容 + 展示方式 + 心理机制的组合。
-必须分三段提取，每段至少1条：
-- 开头（前3秒钩子）：让用户停下来的话术
-- 中间（卖点引导）：引导用户理解产品价值的话术
-- 结尾（促单转化）：促使用户下单的话术
+### CTA 号召行动库（对应「停」和「买」，中间段对应「药」的话术层）
+核心：话术内容 + 展示方式 + 心理机制的组合，不只是文字。
+必须分三段提取，每段至少1条，不要因为用户备注提到了某一段就忽略其他段：
+
+**开头（前3秒钩子）**：让用户停下来的话术
+- 行动类型常用：痛点共鸣/提问触发/结果前置/反常识/数字可信/场景代入
+- 话术逻辑要求：说明触发了什么心理反应
+  正例："直说妈妈真实处境，触发'我也是'的代入感，3秒内留住人"
+  反例："直接点出用户痛点，激发好奇心"（太泛，没说清心理机制）
+
+**中间（卖点引导）**：引导用户理解产品价值的话术，通常有具体的视觉动作配合
+- 行动类型常用：产品演示/对比引导/用户证言/反常识
+- 话术逻辑要求：分析这段话+画面的组合为什么能说服用户，不要复述产品功效
+  正例："真实对比测试，视觉证据无可辩驳，让品质可视化"
+  正例："揭秘面料技术细节，建立专业感和信任，让妈妈觉得'学到了'"
+  反例："通过展示产品的双重效果，满足用户期望"（这是复述功效不是分析心理机制）
+- 配合画面要求：必须有具体视觉动作
+  正例："分屏对比，一边起球缩水一边完好"
+  正例："两种面料并排特写，手指触摸对比"
+  反例："产品使用画面"（太泛）
+
+**结尾（促单转化）**：促使用户下单的话术
+- 行动类型常用：稀缺促单/损失厌恶/直接指令/权益利诱/社交证明/对比锚定
+- 话术要求：必须是视频中实际出现的促单话术原文；如果视频结尾没有口播只有画面，就描述画面上的文字或视觉指令
+- 话术逻辑要求：说明触发了什么购买心理
+  正例："真实库存紧张制造紧迫感，'上次卖光'是最强社交证明"
+  正例："触发妈妈保护焦虑，'不买=宝宝继续受苦'，保护本能驱动购买"
+  反例："促使用户下单"（什么都没说）
+- 如果结尾有配合权益（折扣/赠品/包邮等），在 benefit_pairing 字段写明
+
 每条CTA格式：
 {
   "text_foreign": "原始外文话术（口播或字幕原文，完整不截断）",
   "text_cn": "中文翻译",
   "stage": "开头（前3秒钩子） 或 中间（卖点引导） 或 结尾（促单转化）",
-  "action_type": "痛点共鸣/提问触发/结果前置/反常识/数字可信/场景代入/产品演示/对比引导/稀缺促单/损失厌恶/直接指令/权益利诱",
-  "psychology": "话术逻辑：为什么这句话有效，心理机制是什么",
-  "visual_pairing": "配合画面：这句话出现时屏幕上是什么画面"
+  "action_type": "${ctaActionTypes} 中选一个最匹配的",
+  "psychology": "话术逻辑：为什么这句话有效，分析心理机制，不要复述话术内容",
+  "visual_pairing": "配合画面：具体视觉动作描述，不要泛泛说'产品画面'",
+  "benefit_pairing": "配合权益（仅结尾段需要，如'首单折扣码''90天无理由退款'，没有则空字符串）"
 }
 边界：
 - 平台水印不是CTA
 - 视频中每一段有话术的部分都要提取，不要只提取开头
+- 三段都必须有，这是完整拆解一条带货视频的基本要求
 
 ### 痛点需求场景库（对应「病」）
 核心：用户侧的恐惧/焦虑/尴尬，具体到行为级别。
@@ -576,7 +625,7 @@ app.post('/api/save-to-feishu', async (req, res) => {
     }
 
     // 2. CTA库
-    // 飞书实际字段：CTA话术（外文）(文本), 中文翻译(文本), 视频阶段(单选), 行动类型(单选), 话术逻辑(文本), 配合画面(文本), 适用品类(多选), 参考视频链接(链接)
+    // 飞书实际字段：CTA话术（外文）(文本), 中文翻译(文本), 视频阶段(单选), 行动类型(单选), 话术逻辑(文本), 配合权益(文本), 配合画面(文本), 适用品类(多选), 参考视频链接(链接)
     if (shouldSave('cta')) {
       for (const c of (em.cta || [])) {
         try {
@@ -587,6 +636,7 @@ app.post('/api/save-to-feishu', async (req, res) => {
             '行动类型': c.action_type || '',
             '话术逻辑': c.psychology || '',
             '配合画面': c.visual_pairing || '',
+            '配合权益': c.benefit_pairing || '',
             ...(videoLink ? { '参考视频链接': videoLink } : {})
           });
           results.saved.push({ table: 'CTA库' });
