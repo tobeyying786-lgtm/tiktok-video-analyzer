@@ -191,17 +191,16 @@ function switchTab(id, el) {
   if (id === 't4') renderTab4();
 }
 
-// ============== 飞书入库（确认面板模式） ==============
+// ============== 飞书入库（确认面板模式 v3.5.1） ==============
 
-// 素材库定义
 const SAVE_LIBRARIES = {
-  competitor: { name: '竞品爆款拆解库', color: 'pink' },
-  cta: { name: '号召行动库 CTA', color: 'blue' },
+  cta_hook: { name: 'CTA · 开头钩子', color: 'blue', parent: 'cta' },
+  cta_mid: { name: 'CTA · 中间引导', color: 'blue', parent: 'cta' },
+  cta_end: { name: 'CTA · 结尾促单', color: 'blue', parent: 'cta' },
   painpoint: { name: '痛点需求场景库', color: 'orange' },
   sellingpt: { name: '卖点画面库', color: 'green' },
   socialproof: { name: '社会证明库', color: 'amber' },
   benefit: { name: '权益库', color: 'red' },
-  comment: { name: '爆款评论库', color: 'purple' },
   bgm: { name: 'BGM情绪库', color: 'slate' }
 };
 
@@ -212,26 +211,58 @@ function saveToFeishu() {
   const a = AppState.analysisData?.analysis || AppState.analysisData;
   const em = a.extracted_materials || {};
 
-  // 根据分析数据自动建议入哪些库
+  // 构建建议列表（每个库列出具体内容）
   const suggestions = [];
-  suggestions.push({ lib: 'competitor', reason: '拆解分析本身就是竞品研究，记录视频结构和可复用点', checked: true });
 
-  if ((em.hook_scripts || []).length > 0 || (em.cta_scripts || []).length > 0) {
-    const hooks = (em.hook_scripts || []).map(h => h.text).join('；').substring(0, 60);
-    suggestions.push({ lib: 'cta', reason: '提取到钩子/CTA话术：' + (hooks || '有促单话术'), checked: true });
+  // CTA 开头
+  const hooks = (em.hook_scripts || []).filter(h => !h.type || h.type.includes('开头'));
+  if (hooks.length > 0) {
+    const detail = hooks.map(h => '「' + (h.text || '').substring(0, 40) + '」' + (h.action_type ? '（' + h.action_type + '）' : '')).join('\n');
+    suggestions.push({ lib: 'cta_hook', reason: detail, checked: true, note: '' });
   }
+
+  // CTA 中间
+  const mids = (em.hook_scripts || []).filter(h => h.type && h.type.includes('中间'));
+  if (mids.length > 0) {
+    const detail = mids.map(h => '「' + (h.text || '').substring(0, 40) + '」').join('\n');
+    suggestions.push({ lib: 'cta_mid', reason: detail, checked: true, note: '' });
+  }
+
+  // CTA 结尾
+  const ends = (em.cta_scripts || []);
+  if (ends.length > 0) {
+    const detail = ends.map(c => '「' + (c.text || '').substring(0, 40) + '」' + (c.incentive ? '权益：' + c.incentive : '')).join('\n');
+    suggestions.push({ lib: 'cta_end', reason: detail, checked: true, note: '' });
+  }
+
+  // 痛点库
   if ((em.pain_points || []).length > 0) {
-    const pts = (em.pain_points || []).map(p => p.user_pain || p.scene).join('；').substring(0, 60);
-    suggestions.push({ lib: 'painpoint', reason: '提取到痛点场景：' + pts, checked: true });
+    const detail = (em.pain_points || []).map(p => '· ' + (p.scene || p.user_pain || '') + (p.emotion_keywords ? '（' + (p.emotion_keywords || []).join('、') + '）' : '')).join('\n');
+    suggestions.push({ lib: 'painpoint', reason: detail, checked: true, note: '' });
   }
+
+  // 卖点画面库
   if ((em.selling_points || []).length > 0) {
-    suggestions.push({ lib: 'sellingpt', reason: '提取到卖点画面：' + (em.selling_points || []).length + '个', checked: true });
+    const detail = (em.selling_points || []).map((s, i) => '①②③④⑤⑥⑦⑧⑨⑩'[i] + ' ' + (s.description || '') + (s.visual_type ? '（' + s.visual_type + '）' : '') + (s.shooting_notes ? ' — ' + s.shooting_notes : '')).join('\n');
+    suggestions.push({ lib: 'sellingpt', reason: detail, checked: true, note: '' });
   }
+
+  // 社会证明库
   if ((em.social_proof || []).length > 0) {
-    suggestions.push({ lib: 'socialproof', reason: '提取到社会证明素材：' + (em.social_proof || []).length + '条', checked: true });
+    const detail = (em.social_proof || []).map(s => '· [' + (s.type || '') + '] ' + (s.content || '')).join('\n');
+    suggestions.push({ lib: 'socialproof', reason: detail, checked: true, note: '' });
   }
+
+  // 权益库
+  const benefits = (em.cta_scripts || []).filter(c => c.incentive);
+  if (benefits.length > 0) {
+    const detail = benefits.map(c => '· ' + c.incentive).join('\n');
+    suggestions.push({ lib: 'benefit', reason: detail, checked: true, note: '' });
+  }
+
+  // BGM — 只显示情绪类型，标注需手动填写
   if (em.bgm && em.bgm.mood) {
-    suggestions.push({ lib: 'bgm', reason: 'BGM情绪：' + em.bgm.mood + ' - ' + (em.bgm.description || ''), checked: true });
+    suggestions.push({ lib: 'bgm', reason: '情绪类型：' + em.bgm.mood + '\n风格：' + (em.bgm.description || '') + '\n⚠️ 曲名和音乐人需手动填写（AI 无法识别具体曲目）', checked: false, note: '' });
   }
 
   AppState._saveSuggestions = suggestions;
@@ -241,30 +272,48 @@ function saveToFeishu() {
 function renderSavePanel(suggestions) {
   const panel = document.getElementById('save-panel');
 
+  // 备注输入（顶部）
+  const memoHtml = '<div style="margin-bottom:16px">' +
+    '<label style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px;font-weight:600">💡 入库备注（可选，帮助 AI 重点关注你注意到的亮点）</label>' +
+    '<input type="text" id="save-memo" placeholder="比如：开头的停特别好，水果大特写像溃烂皮肤，骗过了眼睛又绕开了平台审查" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:14px;color:var(--text);font-family:inherit">' +
+  '</div>';
+
+  // 竞品拆解库提示（自动入库，不可取消）
+  const autoSaveHtml = '<div style="background:var(--pinkBg);border:1px solid rgba(236,72,153,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--pink)">' +
+    '📌 竞品爆款拆解库 — 每次拆解自动入库（记录视频结构和可复用点）' +
+  '</div>';
+
   // 库列表
   let libRows = suggestions.map((s, i) => {
     const lib = SAVE_LIBRARIES[s.lib];
+    if (!lib) return '';
     return '<div class="save-lib-row">' +
       '<input type="checkbox" class="save-lib-check" data-idx="' + i + '"' + (s.checked ? ' checked' : '') + ' onchange="saveToggleLib(' + i + ',this.checked)">' +
       '<div class="save-lib-info">' +
         '<div class="save-lib-name"><span class="bg-' + lib.color + '" style="padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;margin-right:6px">' + esc(lib.name) + '</span></div>' +
-        '<div class="save-lib-reason">' + esc(s.reason) + '</div>' +
-        '<div class="save-lib-note"><input type="text" placeholder="补充备注（可选）" data-idx="' + i + '" oninput="saveUpdateNote(' + i + ',this.value)" value="' + esc(s.note || '') + '"></div>' +
+        '<div class="save-lib-reason" style="white-space:pre-line">' + esc(s.reason) + '</div>' +
+        '<div class="save-lib-note"><input type="text" placeholder="补充入库理由（可选）" data-idx="' + i + '" oninput="saveUpdateNote(' + i + ',this.value)" value="' + esc(s.note || '') + '"></div>' +
       '</div>' +
     '</div>';
   }).join('');
 
   // 添加遗漏库的下拉
   const existingLibs = suggestions.map(s => s.lib);
-  const missingLibs = Object.entries(SAVE_LIBRARIES).filter(([k]) => !existingLibs.includes(k));
+  const allLibKeys = Object.keys(SAVE_LIBRARIES);
+  const missingLibs = allLibKeys.filter(k => !existingLibs.includes(k));
   let addOptions = '<option value="">— 选择要添加的库 —</option>';
-  missingLibs.forEach(([k, v]) => {
-    addOptions += '<option value="' + k + '">' + v.name + '</option>';
+  missingLibs.forEach(k => {
+    const v = SAVE_LIBRARIES[k];
+    if (v) addOptions += '<option value="' + k + '">' + v.name + '</option>';
   });
+
+  const checkedCount = suggestions.filter(s => s.checked).length + 1; // +1 for auto competitor
 
   panel.innerHTML = '<div class="archive-panel">' +
     '<h3>📝 入库确认</h3>' +
-    '<div style="font-size:13px;color:var(--text3);margin-bottom:16px">AI 根据分析结果建议入以下素材库，你可以勾选/取消/添加/写备注</div>' +
+    memoHtml +
+    autoSaveHtml +
+    '<div style="font-size:13px;color:var(--text3);margin-bottom:12px">以下素材库由 AI 分析建议，可勾选/取消/添加/写理由：</div>' +
     '<div id="save-lib-list">' + libRows + '</div>' +
     (missingLibs.length > 0 ? '<div class="save-add-row">' +
       '<select class="t4-select" style="width:auto;min-width:200px" id="save-add-select">' + addOptions + '</select>' +
@@ -272,7 +321,7 @@ function renderSavePanel(suggestions) {
       '<button class="btn-sm" style="padding:6px 14px" onclick="saveAddLib()">添加</button>' +
     '</div>' : '') +
     '<div class="archive-actions">' +
-      '<button class="btn-go" style="flex:1" id="btn-save-confirm" onclick="saveConfirm()">✅ 确认入库（' + suggestions.filter(s => s.checked).length + ' 个库）</button>' +
+      '<button class="btn-go" style="flex:1" id="btn-save-confirm" onclick="saveConfirm()">✅ 确认入库（' + checkedCount + ' 个库）</button>' +
       '<button class="btn-sec" onclick="savePanelClose()">取消</button>' +
     '</div>' +
     '<div id="save-status"></div>' +
@@ -285,7 +334,7 @@ function renderSavePanel(suggestions) {
 function saveToggleLib(idx, checked) {
   if (AppState._saveSuggestions[idx]) {
     AppState._saveSuggestions[idx].checked = checked;
-    const count = AppState._saveSuggestions.filter(s => s.checked).length;
+    const count = AppState._saveSuggestions.filter(s => s.checked).length + 1;
     const btn = document.getElementById('btn-save-confirm');
     if (btn) btn.textContent = '✅ 确认入库（' + count + ' 个库）';
   }
@@ -315,19 +364,26 @@ function saveAddLib() {
 
 async function saveConfirm() {
   const selected = AppState._saveSuggestions.filter(s => s.checked);
-  if (selected.length === 0) return showErr('请至少选择一个库');
+  const memo = (document.getElementById('save-memo') || {}).value || '';
 
   const btn = document.getElementById('btn-save-confirm');
   const status = document.getElementById('save-status');
   btn.disabled = true;
   btn.textContent = '⏳ 写入中…';
-  status.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center"><div class="spin" style="margin:0 auto 8px"></div>正在写入 ' + selected.length + ' 个库…</div>';
+  status.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center"><div class="spin" style="margin:0 auto 8px"></div>正在写入…</div>';
 
   try {
     const analysis = AppState.analysisData?.analysis || AppState.analysisData;
     const videoUrl = AppState.analysisData?.videoUrl || '';
     const filename = AppState.curFile ? AppState.curFile.name : '';
-    const libs = selected.map(s => ({ lib: s.lib, note: s.note || '' }));
+    // 合并 CTA 子类型为 cta
+    const libs = [];
+    // 竞品库自动加入
+    libs.push({ lib: 'competitor', note: memo });
+    selected.forEach(s => {
+      const parent = SAVE_LIBRARIES[s.lib]?.parent || s.lib;
+      libs.push({ lib: parent, note: s.note || '', subtype: s.lib });
+    });
 
     const data = await API.saveToFeishu(analysis, '', videoUrl, filename, libs);
     const saved = data.results?.saved?.length || 0;
@@ -340,7 +396,7 @@ async function saveConfirm() {
     status.innerHTML = resultHtml;
 
     btn.textContent = '✅ 入库完成';
-    setTimeout(() => { btn.disabled = false; btn.textContent = '✅ 确认入库（' + selected.length + ' 个库）'; }, 3000);
+    setTimeout(() => { btn.disabled = false; btn.textContent = '✅ 确认入库'; }, 3000);
   } catch (e) {
     status.innerHTML = '<div style="color:var(--red);padding:12px">❌ ' + esc(e.message) + '</div>';
     btn.disabled = false;
