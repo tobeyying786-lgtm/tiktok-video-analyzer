@@ -469,6 +469,104 @@ app.post('/api/save-to-feishu', async (req, res) => {
   } catch (error) { console.error('飞书入库失败:', error); res.status(500).json({ error: '飞书入库失败: ' + error.message }); }
 });
 
+// === API: 快速存档（AI分析 + 自动判断入哪个库） ===
+const ARCHIVE_LIBRARIES = {
+  cta: { name: '号召行动库 CTA', table: 'cta', fields: ['CTA话术（英文）', '中文翻译', '视频阶段', '行动类型', '话术逻辑'] },
+  painpoint: { name: '痛点需求场景库', table: 'painpoint', fields: ['场景名称', '场景分类', '用户痛点', '情绪关键词', '产品切入点', '来源'] },
+  sellingpt: { name: '卖点画面库', table: 'sellingpt', fields: ['拍摄说明', '画面类型', '作用', '适配视频阶段'] },
+  socialproof: { name: '社会证明库', table: 'socialproof', fields: ['证明类型', '素材名称', '信任强度', '使用建议'] },
+  benefit: { name: '权益库', table: 'benefit', fields: ['权益名称', '权益类型', '权益描述', '适用场景', '成本等级'] },
+  comment: { name: '爆款评论库', table: 'comment', fields: ['评论原文', '中文翻译', '情绪标签', '可转化方向', '来源视频链接'] },
+  competitor: { name: '竞品爆款拆解库', table: 'competitor', fields: ['视频标题/描述', '钩子话术', '视频结构', '可复用点'] },
+  bgm: { name: 'BGM情绪库', table: 'bgm', fields: ['BGM名称', '情绪类型', '适用内容', '特征描述'] }
+};
+
+app.post('/api/archive', upload.single('video'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: '请上传视频文件' });
+    if (!GEMINI_API_KEY) return res.status(500).json({ error: 'Gemini 未配置' });
+
+    const videoPath = req.file.path;
+    const memo = req.body.memo || '';
+    const videoBase64 = fs.readFileSync(videoPath).toString('base64');
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    const libList = Object.entries(ARCHIVE_LIBRARIES).map(([k, v]) => `- ${k}: ${v.name}（字段：${v.fields.join('、')}）`).join('\n');
+
+    const prompt = `你是TikTok短视频素材管理助手。请观看这段视频片段，判断它应该归入哪个素材库，并填好该库的所有字段。
+
+## 可选素材库
+${libList}
+
+## 用户备注
+${memo || '无'}
+
+## 规则
+1. 只选一个最匹配的库
+2. 按素材本身的性质分类（比如一段展示用户好评的片段归入"社会证明库"，不是"痛点库"）
+3. 每个字段都要填，没有信息的填空字符串
+4. 全部用中文
+
+输出严格JSON：
+{
+  "target_library": "库的key（如cta/painpoint/sellingpt等）",
+  "confidence": "高/中/低",
+  "reason": "为什么归入这个库（一句话）",
+  "fields": {
+    "字段名1": "值1",
+    "字段名2": "值2"
+  }
+}`;
+
+    const result = await model.generateContent([
+      { text: prompt },
+      { inlineData: { mimeType: getMimeType(req.file.originalname), data: videoBase64 } }
+    ]);
+    const responseText = result.response.text();
+
+    let archiveResult;
+    try {
+      const cleaned = responseText.replace(/`{3,}[\w]*\s*/g, '').trim();
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      if (start !== -1 && end > start) {
+        archiveResult = JSON.parse(cleaned.substring(start, end + 1));
+      } else {
+        archiveResult = { raw_response: responseText };
+      }
+    } catch (e) {
+      console.error('archive JSON解析失败:', e.message);
+      archiveResult = { raw_response: responseText };
+    }
+
+    // 清理视频文件（1小时后）
+    setTimeout(() => { try { if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath); } catch(e){} }, 3600000);
+
+    res.json({ success: true, archive: archiveResult, libraries: ARCHIVE_LIBRARIES });
+  } catch (error) {
+    console.error('存档分析失败:', error);
+    res.status(500).json({ error: '存档分析失败: ' + error.message });
+  }
+});
+
+// === API: 存档确认入库 ===
+app.post('/api/archive/save', async (req, res) => {
+  try {
+    if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) return res.status(500).json({ error: '飞书未配置' });
+    const { targetLibrary, fields } = req.body;
+    if (!targetLibrary || !fields) return res.status(400).json({ error: '缺少参数' });
+    const lib = ARCHIVE_LIBRARIES[targetLibrary];
+    if (!lib) return res.status(400).json({ error: '未知的库: ' + targetLibrary });
+    const tableId = FEISHU_CONFIG.tables[lib.table];
+    if (!tableId) return res.status(400).json({ error: '表ID未配置: ' + lib.table });
+    const record = await feishuCreate(tableId, fields);
+    res.json({ success: true, record, library: lib.name });
+  } catch (error) {
+    console.error('存档入库失败:', error);
+    res.status(500).json({ error: '存档入库失败: ' + error.message });
+  }
+});
+
 // === API: Feishu List Records (for BGM library) ===
 async function feishuList(tableId, opts = {}) {
   const token = await getFeishuToken();

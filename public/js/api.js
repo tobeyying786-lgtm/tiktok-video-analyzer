@@ -172,6 +172,33 @@ const API = {
   async healthCheck() {
     const resp = await fetch('/api/health');
     return await resp.json();
+  },
+
+  /**
+   * 快速存档 - AI 分析判断入哪个库
+   */
+  async archive(file, memo) {
+    const fd = new FormData();
+    fd.append('video', file);
+    fd.append('memo', memo || '');
+    const resp = await fetch('/api/archive', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || '存档分析失败');
+    return data;
+  },
+
+  /**
+   * 存档确认入库
+   */
+  async archiveSave(targetLibrary, fields) {
+    const resp = await fetch('/api/archive/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetLibrary, fields })
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || '入库失败');
+    return data;
   }
 };
 
