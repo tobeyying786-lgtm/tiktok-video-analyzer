@@ -809,6 +809,91 @@ app.post('/api/feishu/framework/create', async (req, res) => {
   } catch (e) { console.error('框架入库失败:', e); res.status(500).json({ error: e.message }); }
 });
 
+// === Image Gen (关键帧生成) ★ V3.6.0 ===
+const IMAGEGEN_MODELS = [
+  { id: 'google/gemini-3-pro-image-preview', name: 'Nano Banana Pro', tier: '优质', price: '~$0.04-0.08/张', modalities: ['image', 'text'], supportsRef: true },
+  { id: 'google/gemini-3.1-flash-image-preview', name: 'Nano Banana 2', tier: '性价比', price: '~$0.02/张', modalities: ['image', 'text'], supportsRef: true },
+  { id: 'bytedance-seed/seedream-4.5', name: 'Seedream 4.5', tier: '廉价', price: '$0.04/张', modalities: ['image'], supportsRef: false },
+  { id: 'black-forest-labs/flux-2-klein', name: 'FLUX.2 Klein', tier: '最快', price: '$0.014/MP', modalities: ['image'], supportsRef: false }
+];
+
+app.get('/api/imagegen/models', (req, res) => {
+  res.json({ success: true, models: IMAGEGEN_MODELS.map(m => ({ ...m, available: !!OPENROUTER_API_KEY })) });
+});
+
+app.post('/api/imagegen/generate', async (req, res) => {
+  try {
+    if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'OPENROUTER_API_KEY 未配置' });
+    const { prompt, modelId, aspectRatio, referenceImage } = req.body;
+    if (!prompt) return res.status(400).json({ error: '缺少 prompt' });
+
+    const model = IMAGEGEN_MODELS.find(m => m.id === modelId) || IMAGEGEN_MODELS[1]; // 默认 Nano Banana 2
+
+    // 构建 messages
+    const userContent = [];
+    // 如果有参考图，先放图片
+    if (referenceImage && model.supportsRef) {
+      userContent.push({ type: 'image_url', image_url: { url: referenceImage } });
+    }
+    userContent.push({ type: 'text', text: prompt });
+
+    const body = {
+      model: model.id,
+      messages: [{ role: 'user', content: userContent.length === 1 ? prompt : userContent }],
+      modalities: model.modalities,
+      max_tokens: 4096
+    };
+
+    // 添加 image_config（aspect_ratio）
+    if (aspectRatio) {
+      body.image_config = { aspect_ratio: aspectRatio };
+    }
+
+    console.log('[ImageGen] 模型:', model.id, '比例:', aspectRatio || '默认');
+
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'HTTP-Referer': 'https://tiktok-analyzer.zeabur.app',
+        'X-Title': 'TikTok Analyzer'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!r.ok) {
+      const errText = await r.text();
+      console.error('[ImageGen] API错误:', r.status, errText.substring(0, 200));
+      throw new Error('图片生成失败: HTTP ' + r.status);
+    }
+
+    const data = await r.json();
+    const choice = data.choices?.[0]?.message;
+
+    // 提取图片 — OpenRouter 返回格式：choice.message.images[].image_url.url (base64)
+    let imageUrl = null;
+    if (choice?.images && choice.images.length > 0) {
+      imageUrl = choice.images[0].image_url?.url || choice.images[0].url || null;
+    }
+    // 某些模型可能直接在 content 里返回 base64
+    if (!imageUrl && choice?.content) {
+      const b64Match = (typeof choice.content === 'string' ? choice.content : '').match(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/);
+      if (b64Match) imageUrl = b64Match[0];
+    }
+
+    if (!imageUrl) {
+      console.error('[ImageGen] 未找到图片:', JSON.stringify(data).substring(0, 500));
+      return res.json({ success: false, error: '模型未返回图片，请重试或换一个模型' });
+    }
+
+    res.json({ success: true, imageUrl, model: model.name });
+  } catch (e) {
+    console.error('图片生成失败:', e);
+    res.status(500).json({ error: '图片生成失败: ' + e.message });
+  }
+});
+
 // === Video Gen ===
 app.get('/api/videogen/platforms', (req, res) => {
   res.json({ platforms: [

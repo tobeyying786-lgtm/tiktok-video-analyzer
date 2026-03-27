@@ -81,6 +81,25 @@ const API = {
     return data;
   },
 
+  // V3.6.0: 关键帧图片生成
+  async getImageGenModels() {
+    const resp = await fetch('/api/imagegen/models');
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || '模型列表加载失败');
+    return data.models;
+  },
+
+  async generateKeyframe(prompt, modelId, aspectRatio, referenceImage) {
+    const resp = await fetch('/api/imagegen/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, modelId, aspectRatio, referenceImage: referenceImage || null })
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || '图片生成失败');
+    return data;
+  },
+
   async healthCheck() { return await (await fetch('/api/health')).json(); },
   async archive(file, memo) { const fd = new FormData(); fd.append('video', file); fd.append('memo', memo || ''); const resp = await fetch('/api/archive', { method: 'POST', body: fd }); const data = await resp.json(); if (!resp.ok) throw new Error(data.error || '存档分析失败'); return data; },
   async archiveSave(targetLibrary, fields) { const resp = await fetch('/api/archive/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetLibrary, fields }) }); const data = await resp.json(); if (!resp.ok) throw new Error(data.error || '入库失败'); return data; }
