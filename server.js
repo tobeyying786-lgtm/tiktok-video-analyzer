@@ -353,7 +353,9 @@ ${frameworkRules}
   "user_pain": "用户真正害怕的事（穿了没洗的衣服导致皮肤发痒甚至皮肤病）",
   "emotion_keywords": ["发痒", "恶心", "担忧"],
   "product_solution": "产品如何解决这个痛点",
-  "content_angle": "拍成什么类型的视频"
+  "content_angle": "拍成什么类型的视频",
+  "script_example": "话术示例：从视频口播或字幕中提取与这个痛点相关的原文（口播优先，口播通常更完整），什么语言就录什么语言",
+  "script_example_cn": "中文翻译：如果原文是中文则与上一字段相同"
 }
 边界：
 - 「洗衣机没清洁」不是痛点，这是产品要解决的问题
@@ -446,6 +448,26 @@ ${frameworkRules}
     }
 
     if (!analysisResult.parse_error) analysisResult._ffprobe = ffprobeData;
+
+    // ★ V3.5.6: 截断检测 — 检查关键字段是否完整
+    if (!analysisResult.parse_error) {
+      const em = analysisResult.extracted_materials || {};
+      const truncationWarnings = [];
+      if (!em.cta || em.cta.length === 0) truncationWarnings.push('CTA库为空');
+      else {
+        const stages = (em.cta || []).map(c => c.stage || '');
+        if (!stages.some(s => s.includes('开头'))) truncationWarnings.push('CTA缺少开头段');
+        if (!stages.some(s => s.includes('中间'))) truncationWarnings.push('CTA缺少中间段');
+        if (!stages.some(s => s.includes('结尾'))) truncationWarnings.push('CTA缺少结尾段');
+      }
+      if (!em.pain_points || em.pain_points.length === 0) truncationWarnings.push('痛点库为空');
+      if (!em.selling_visuals || em.selling_visuals.length === 0) truncationWarnings.push('卖点画面库为空');
+      if (!analysisResult.competitor_entry || !analysisResult.competitor_entry.hook_script) truncationWarnings.push('竞品拆解库钩子为空');
+      if (truncationWarnings.length > 0) {
+        analysisResult._truncation_warning = '分析结果可能不完整: ' + truncationWarnings.join(', ') + '。建议重新分析。';
+        console.log('[截断警告]', analysisResult._truncation_warning);
+      }
+    }
 
     send(5, '根据镜头时间点截帧...');
     if (analysisResult.shots && analysisResult.shots.length > 0) {
@@ -645,11 +667,10 @@ app.post('/api/save-to-feishu', async (req, res) => {
     }
 
     // 3. 痛点库
-    // 飞书实际字段：场景名称(文本), 场景分类(单选), 用户痛点(文本), 情绪关键词(多选!), 产品切入点(文本), 内容角度建议(文本), 来源(单选), 关联视频链接(链接)
+    // 飞书实际字段：场景名称(文本), 场景分类(单选), 用户痛点(文本), 情绪关键词(多选!), 产品切入点(文本), 内容角度建议(文本), 话术示例（英文）(文本), 中文翻译(文本), 来源(单选), 关联视频链接(链接)
     if (shouldSave('painpoint')) {
       for (const p of (em.pain_points || [])) {
         try {
-          // 情绪关键词是多选字段，需要传数组
           const emotionArr = Array.isArray(p.emotion_keywords) ? p.emotion_keywords : [];
           await feishuCreate(FEISHU_CONFIG.tables.painpoint, {
             '场景名称': p.scene_name || '',
@@ -658,6 +679,8 @@ app.post('/api/save-to-feishu', async (req, res) => {
             '情绪关键词': emotionArr,
             '产品切入点': p.product_solution || '',
             '内容角度建议': p.content_angle || '',
+            '话术示例（英文）': p.script_example || '',
+            '中文翻译': p.script_example_cn || '',
             '来源': 'TikTok爆款',
             ...(videoLink ? { '关联视频链接': videoLink } : {})
           });

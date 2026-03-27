@@ -125,84 +125,76 @@ function saveToFeishu() {
   const suggestions = [];
   const allCta = em.cta || [];
 
-  // CTA 开头 — 完整显示，不截断
+  // 辅助：把每条素材变成独立 item，每个 item 有自己的 textarea
+  function ctaToText(h) {
+    return '「' + (h.text_foreign || '') + '」（' + (h.action_type || '') + '）\n' +
+      '逻辑: ' + (h.psychology || '') + '\n' +
+      '画面: ' + (h.visual_pairing || '') +
+      (h.benefit_pairing ? '\n权益: ' + h.benefit_pairing : '');
+  }
+
+  // CTA 开头
   const hooks = allCta.filter(c => c.stage && c.stage.includes('开头'));
   if (hooks.length > 0) {
-    const detail = hooks.map(h =>
-      '「' + (h.text_foreign || '') + '」（' + (h.action_type || '') + '）\n' +
-      '逻辑: ' + (h.psychology || '') + '\n' +
-      '画面: ' + (h.visual_pairing || '')
-    ).join('\n\n');
-    suggestions.push({ lib: 'cta_hook', reason: detail, checked: true, note: '' });
+    suggestions.push({ lib: 'cta_hook', items: hooks.map(h => ctaToText(h)), checked: true });
   }
 
   // CTA 中间
   const mids = allCta.filter(c => c.stage && c.stage.includes('中间'));
   if (mids.length > 0) {
-    const detail = mids.map(h =>
-      '「' + (h.text_foreign || '') + '」（' + (h.action_type || '') + '）\n' +
-      '逻辑: ' + (h.psychology || '') + '\n' +
-      '画面: ' + (h.visual_pairing || '')
-    ).join('\n\n');
-    suggestions.push({ lib: 'cta_mid', reason: detail, checked: true, note: '' });
+    suggestions.push({ lib: 'cta_mid', items: mids.map(h => ctaToText(h)), checked: true });
   }
 
   // CTA 结尾
   const ends = allCta.filter(c => c.stage && c.stage.includes('结尾'));
   if (ends.length > 0) {
-    const detail = ends.map(h =>
-      '「' + (h.text_foreign || '') + '」（' + (h.action_type || '') + '）\n' +
-      '逻辑: ' + (h.psychology || '') + '\n' +
-      '画面: ' + (h.visual_pairing || '')
-    ).join('\n\n');
-    suggestions.push({ lib: 'cta_end', reason: detail, checked: true, note: '' });
+    suggestions.push({ lib: 'cta_end', items: ends.map(h => ctaToText(h)), checked: true });
   }
 
   // 痛点库
   if ((em.pain_points || []).length > 0) {
-    const detail = (em.pain_points || []).map(p =>
-      '-- ' + (p.scene_name || '') + '（' + (p.scene_category || '') + '）\n' +
+    suggestions.push({ lib: 'painpoint', items: (em.pain_points || []).map(p =>
+      (p.scene_name || '') + '（' + (p.scene_category || '') + '）\n' +
       '痛点: ' + (p.user_pain || '') + '\n' +
-      '情绪: ' + (p.emotion_keywords || []).join('、') + '\n' +
+      '情绪: ' + (p.emotion_keywords || []).join(', ') + '\n' +
       '切入: ' + (p.product_solution || '') + '\n' +
-      '角度: ' + (p.content_angle || '')
-    ).join('\n\n');
-    suggestions.push({ lib: 'painpoint', reason: detail, checked: true, note: '' });
+      '角度: ' + (p.content_angle || '') + '\n' +
+      '话术: ' + (p.script_example || '') +
+      (p.script_example_cn && p.script_example_cn !== p.script_example ? '\n翻译: ' + p.script_example_cn : '')
+    ), checked: true });
   }
 
-  // 卖点画面库
+  // 卖点画面库 — 每条独立
   if ((em.selling_visuals || []).length > 0) {
-    const nums = ['(1)','(2)','(3)','(4)','(5)','(6)','(7)','(8)','(9)','(10)'];
-    const detail = (em.selling_visuals || []).map((s, i) =>
-      (nums[i] || (i+1)) + ' 「' + (s.visual_type || '') + '」\n' +
+    suggestions.push({ lib: 'sellingpt', items: (em.selling_visuals || []).map(s =>
+      '「' + (s.visual_type || '') + '」\n' +
       '拍摄: ' + (s.shooting_notes || '') + '\n' +
       '作用: ' + (s.purpose || '')
-    ).join('\n\n');
-    suggestions.push({ lib: 'sellingpt', reason: detail, checked: true, note: '' });
+    ), checked: true });
   }
 
   // 社会证明库
   if ((em.social_proof || []).length > 0) {
-    const detail = (em.social_proof || []).map(s =>
-      '-- [' + (s.proof_type || '') + '] ' + (s.material_name || '') + ' (' + (s.trust_strength || '') + ')\n' +
+    suggestions.push({ lib: 'socialproof', items: (em.social_proof || []).map(s =>
+      '[' + (s.proof_type || '') + '] ' + (s.material_name || '') + ' (' + (s.trust_strength || '') + ')\n' +
       '用法: ' + (s.usage_scenario || '')
-    ).join('\n\n');
-    suggestions.push({ lib: 'socialproof', reason: detail, checked: true, note: '' });
+    ), checked: true });
   }
 
   // 权益库 — 默认不勾选
   if ((em.benefits || []).length > 0) {
-    const detail = (em.benefits || []).map(b =>
-      '-- ' + (b.benefit_name || '') + '（' + (b.benefit_type || '') + '）\n' +
+    suggestions.push({ lib: 'benefit', items: (em.benefits || []).map(b =>
+      (b.benefit_name || '') + '（' + (b.benefit_type || '') + '）\n' +
       '描述: ' + (b.description || '') + '\n' +
       '成本: ' + (b.cost_level || '')
-    ).join('\n\n');
-    suggestions.push({ lib: 'benefit', reason: detail, checked: false, note: '' });
+    ), checked: false });
   }
 
   // BGM — 默认不勾选
   if (em.bgm && em.bgm.mood) {
-    suggestions.push({ lib: 'bgm', reason: '情绪类型: ' + em.bgm.mood + '\n风格: ' + (em.bgm.description || '') + '\n注意: 曲名和音乐人需手动填写，AI无法识别具体曲目', checked: false, note: '' });
+    suggestions.push({ lib: 'bgm', items: [
+      '情绪类型: ' + em.bgm.mood + '\n风格: ' + (em.bgm.description || '') + '\n注意: 曲名和音乐人需手动填写，AI无法识别具体曲目'
+    ], checked: false });
   }
 
   AppState._saveSuggestions = suggestions;
@@ -212,28 +204,36 @@ function saveToFeishu() {
 function renderSavePanel(suggestions) {
   const panel = document.getElementById('save-panel');
   const memo = AppState._analyzeMemo || '';
-  const memoHtml = memo ? '<div style="background:var(--accentBg);border:1px solid rgba(58,176,158,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--accent2)">分析时的入库备注: ' + esc(memo) + '</div>' : '';
+  const memoHtml = memo ? '<div style="background:var(--accentBg);border:1px solid rgba(58,176,158,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:14px;color:var(--accent2)">分析时的入库备注: ' + esc(memo) + '</div>' : '';
 
-  // 竞品拆解库 — 分段换行显示
+  // 截断警告
   const a = AppState.analysisData?.analysis || AppState.analysisData;
+  const truncWarn = a._truncation_warning || '';
+  const truncHtml = truncWarn ? '<div style="background:var(--redBg);border:1px solid var(--redBd);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:14px;color:#fca5a5">' + esc(truncWarn) + '</div>' : '';
+
+  // 竞品拆解库
   const ce = a.competitor_entry || {};
-  const autoSaveHtml = '<div style="background:var(--pinkBg);border:1px solid rgba(236,72,153,0.2);border-radius:8px;padding:14px 16px;margin-bottom:16px;font-size:13px;color:var(--pink);line-height:1.8">' +
+  const autoSaveHtml = '<div style="background:var(--pinkBg);border:1px solid rgba(236,72,153,0.2);border-radius:8px;padding:14px 16px;margin-bottom:16px;font-size:14px;color:var(--pink);line-height:1.8">' +
     '<div style="font-weight:700;margin-bottom:8px">竞品爆款拆解库 -- 每次拆解自动入库</div>' +
     (ce.title ? '<div style="margin-bottom:6px"><span style="color:var(--text3)">标题:</span> ' + esc(ce.title) + '</div>' : '') +
     (ce.hook_script ? '<div style="margin-bottom:6px"><span style="color:var(--text3)">钩子:</span> ' + esc(ce.hook_script) + '</div>' : '') +
     (ce.reusable_points ? '<div><span style="color:var(--text3)">可复用:</span> ' + esc(ce.reusable_points) + '</div>' : '') +
   '</div>';
 
-  // 每条入库理由改为可编辑textarea + 加号新增行
-  let libRows = suggestions.map((s, i) => {
+  // 每个库：标题 + 每条素材独立一个 textarea
+  let libRows = suggestions.map((s, si) => {
     const lib = SAVE_LIBRARIES[s.lib];
     if (!lib) return '';
-    return '<div class="save-lib-row">' +
-      '<input type="checkbox" class="save-lib-check" data-idx="' + i + '"' + (s.checked ? ' checked' : '') + ' onchange="saveToggleLib(' + i + ',this.checked)">' +
-      '<div class="save-lib-info">' +
-        '<div class="save-lib-name"><span class="bg-' + lib.color + '" style="padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;margin-right:6px">' + esc(lib.name) + '</span></div>' +
-        '<textarea class="save-lib-textarea" data-idx="' + i + '" oninput="saveUpdateReason(' + i + ',this.value)" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--text);font-family:inherit;line-height:1.7;resize:vertical;min-height:60px">' + esc(s.reason) + '</textarea>' +
-        '<button class="btn-sm" style="margin-top:4px;padding:3px 10px;font-size:11px" onclick="saveAddLine(' + i + ')">+ 新增一行</button>' +
+    const itemsHtml = (s.items || []).map((item, ii) =>
+      '<textarea data-si="' + si + '" data-ii="' + ii + '" oninput="saveUpdateItem(' + si + ',' + ii + ',this.value)" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:14px;color:var(--text);font-family:inherit;line-height:1.8;resize:vertical;min-height:80px;margin-bottom:8px">' + esc(item) + '</textarea>'
+    ).join('');
+
+    return '<div class="save-lib-row" style="padding:16px 0">' +
+      '<input type="checkbox" class="save-lib-check" data-idx="' + si + '"' + (s.checked ? ' checked' : '') + ' onchange="saveToggleLib(' + si + ',this.checked)">' +
+      '<div class="save-lib-info" style="flex:1">' +
+        '<div class="save-lib-name" style="margin-bottom:10px"><span class="bg-' + lib.color + '" style="padding:3px 10px;border-radius:4px;font-size:12px;font-weight:700;margin-right:6px">' + esc(lib.name) + '</span><span style="font-size:12px;color:var(--text3)">' + (s.items || []).length + ' 条</span></div>' +
+        itemsHtml +
+        '<button class="btn-sm" style="margin-top:2px;padding:3px 10px;font-size:12px" onclick="saveAddItem(' + si + ')">+ 新增一条</button>' +
       '</div>' +
     '</div>';
   }).join('');
@@ -246,11 +246,11 @@ function renderSavePanel(suggestions) {
   const checkedCount = suggestions.filter(s => s.checked).length + 1;
 
   panel.innerHTML = '<div class="archive-panel">' +
-    '<h3>入库确认</h3>' +
-    memoHtml + autoSaveHtml +
-    '<div style="font-size:13px;color:var(--text3);margin-bottom:12px">以下素材库由 AI 分析建议，可勾选/取消/添加/写理由:</div>' +
+    '<h3 style="font-size:18px">入库确认</h3>' +
+    truncHtml + memoHtml + autoSaveHtml +
+    '<div style="font-size:14px;color:var(--text3);margin-bottom:12px">以下素材库由 AI 分析建议。每条素材可直接编辑，可勾选/取消，可新增:</div>' +
     '<div id="save-lib-list">' + libRows + '</div>' +
-    (missingLibs.length > 0 ? '<div class="save-add-row"><select class="t4-select" style="width:auto;min-width:200px" id="save-add-select">' + addOptions + '</select><input type="text" placeholder="入库理由" id="save-add-reason" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit"><button class="btn-sm" style="padding:6px 14px" onclick="saveAddLib()">添加</button></div>' : '') +
+    (missingLibs.length > 0 ? '<div class="save-add-row"><select class="t4-select" style="width:auto;min-width:200px" id="save-add-select">' + addOptions + '</select><button class="btn-sm" style="padding:6px 14px" onclick="saveAddLib()">添加库</button></div>' : '') +
     '<div class="archive-actions"><button class="btn-go" style="flex:1" id="btn-save-confirm" onclick="saveConfirm()">确认入库（' + checkedCount + ' 个库）</button><button class="btn-sec" onclick="savePanelClose()">取消</button></div>' +
     '<div id="save-status"></div></div>';
 
@@ -266,24 +266,29 @@ function saveToggleLib(idx, checked) {
     if (btn) btn.textContent = '确认入库（' + count + ' 个库）';
   }
 }
-function saveUpdateReason(idx, value) {
-  if (AppState._saveSuggestions[idx]) AppState._saveSuggestions[idx].reason = value;
+function saveUpdateItem(si, ii, value) {
+  if (AppState._saveSuggestions[si] && AppState._saveSuggestions[si].items[ii] !== undefined) {
+    AppState._saveSuggestions[si].items[ii] = value;
+  }
 }
 
-function saveAddLine(idx) {
-  const textarea = document.querySelector('.save-lib-textarea[data-idx="' + idx + '"]');
-  if (textarea) {
-    textarea.value += '\n';
-    textarea.focus();
-    textarea.selectionStart = textarea.value.length;
+function saveAddItem(si) {
+  if (AppState._saveSuggestions[si]) {
+    AppState._saveSuggestions[si].items.push('');
+    renderSavePanel(AppState._saveSuggestions);
+    // 聚焦到新增的textarea
+    setTimeout(() => {
+      const textareas = document.querySelectorAll('textarea[data-si="' + si + '"]');
+      if (textareas.length) textareas[textareas.length - 1].focus();
+    }, 100);
   }
 }
 
 function saveAddLib() {
-  const sel = document.getElementById('save-add-select'), reason = document.getElementById('save-add-reason');
-  const libKey = sel ? sel.value : '', reasonText = reason ? reason.value.trim() : '';
+  const sel = document.getElementById('save-add-select');
+  const libKey = sel ? sel.value : '';
   if (!libKey) return;
-  AppState._saveSuggestions.push({ lib: libKey, reason: reasonText || '手动添加', note: '', checked: true });
+  AppState._saveSuggestions.push({ lib: libKey, items: [''], checked: true });
   renderSavePanel(AppState._saveSuggestions);
 }
 
@@ -316,6 +321,6 @@ async function saveConfirm() {
 function savePanelClose() { document.getElementById('save-panel').style.display = 'none'; }
 
 window.showSel = showSel; window.startAnalysis = startAnalysis; window.switchTab = switchTab;
-window.saveToFeishu = saveToFeishu; window.saveToggleLib = saveToggleLib; window.saveUpdateReason = saveUpdateReason;
-window.saveAddLine = saveAddLine; window.saveAddLib = saveAddLib; window.saveConfirm = saveConfirm; window.savePanelClose = savePanelClose;
+window.saveToFeishu = saveToFeishu; window.saveToggleLib = saveToggleLib; window.saveUpdateItem = saveUpdateItem;
+window.saveAddItem = saveAddItem; window.saveAddLib = saveAddLib; window.saveConfirm = saveConfirm; window.savePanelClose = savePanelClose;
 window.resetAll = resetAll;
