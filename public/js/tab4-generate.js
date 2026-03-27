@@ -181,9 +181,16 @@ function t4RenderShotTable() {
 // ============== 关键帧生成控制栏 ==============
 
 function t4RenderKeyframeControls() {
+  const ASPECT_OPTIONS = ['9:16', '16:9', '4:3', '3:4', '4:5', '1:1', '2:3', '3:2', '5:4', '21:9'];
+  const curAspect = AppState.t4KfAspectRatio || '9:16';
+  const curSubtitle = AppState.t4KfSubtitle !== false; // 默认开启
+  const aspectOpts = ASPECT_OPTIONS.map(a => '<option value="' + a + '"' + (a === curAspect ? ' selected' : '') + '>' + a + '</option>').join('');
+
   return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
     '<span style="font-size:14px;font-weight:700;color:var(--text)">关键帧生成</span>' +
     '<select class="t4-sel-sm" id="t4-img-model" style="min-width:160px"><option value="">加载中...</option></select>' +
+    '<select class="t4-sel-sm" id="t4-kf-aspect" onchange="t4ChangeKfAspect(this.value)" style="min-width:80px">' + aspectOpts + '</select>' +
+    '<label style="font-size:13px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="t4-kf-subtitle"' + (curSubtitle ? ' checked' : '') + ' onchange="t4ToggleKfSubtitle(this.checked)"> 带字幕</label>' +
     '<button class="btn-sm" style="padding:6px 16px;font-size:13px;background:var(--accentBg);border-color:var(--accent);color:var(--accent2)" onclick="t4GenAllKeyframes()">全部生成</button>' +
     '<span style="font-size:12px;color:var(--text3)" id="t4-kf-status"></span>' +
   '</div>';
@@ -265,15 +272,20 @@ async function t4LoadImageModels() {
 function t4GetImagePrompt(shot, index) {
   const s = AppState.t4Settings;
   const cam = shot.camera || {};
+  const includeSubtitle = AppState.t4KfSubtitle !== false;
   let p = 'TikTok short video keyframe. Shot #' + (index + 1) + ', role: ' + (shot.role || shot.element || '无') + '.\n';
   p += 'Scene: ' + (shot.scene_description_cn || '') + '\n';
-  if (shot.voiceover_cn) p += 'Voiceover: ' + shot.voiceover_cn + '\n';
-  if (shot.text_overlay) p += 'Text overlay: ' + shot.text_overlay + '\n';
+  if (includeSubtitle && shot.voiceover_cn) p += 'Voiceover subtitle: ' + shot.voiceover_cn + '\n';
+  if (includeSubtitle && shot.text_overlay) p += 'Text overlay: ' + shot.text_overlay + '\n';
   if (shot.shooting_notes) p += 'Camera notes: ' + shot.shooting_notes + '\n';
   if (cam.shot_size) p += 'Shot size: ' + cam.shot_size + '\n';
   if (cam.lighting && cam.lighting.length) p += 'Lighting: ' + cam.lighting.join(', ') + '\n';
   if (cam.style) p += 'Style: ' + cam.style + '\n';
-  p += 'Aspect ratio: ' + (s.layoutTemplate ? (LAYOUT_TEMPLATES[s.layoutTemplate]?.ratio || '9:16') : '9:16');
+  const kfAspect = AppState.t4KfAspectRatio || '9:16';
+  p += 'Aspect ratio: ' + kfAspect;
+  if (includeSubtitle && (shot.voiceover_cn || shot.text_overlay)) {
+    p += '\nRender the subtitle text visually on the image in the style of a TikTok video.';
+  }
   return p;
 }
 
@@ -287,7 +299,7 @@ async function t4GenOneKeyframe(idx) {
 
   const shot = shots[idx];
   const prompt = t4GetImagePrompt(shot, idx);
-  const ratio = LAYOUT_TEMPLATES[AppState.t4Settings.layoutTemplate]?.ratio || '9:16';
+  const ratio = AppState.t4KfAspectRatio || '9:16';
   const refImg = t4KeyframeData[idx]?.referenceImage || null;
 
   t4KeyframeData[idx] = { status: 'loading', imageUrl: null, model: '', referenceImage: refImg };
@@ -320,7 +332,7 @@ async function t4GenAllKeyframes() {
 
     try {
       const prompt = t4GetImagePrompt(shots[i], i);
-      const ratio = LAYOUT_TEMPLATES[AppState.t4Settings.layoutTemplate]?.ratio || '9:16';
+      const ratio = AppState.t4KfAspectRatio || '9:16';
       const refImg = t4KeyframeData[i]?.referenceImage || null;
       const result = await API.generateKeyframe(prompt, modelId, ratio, refImg);
       t4KeyframeData[i] = { status: 'done', imageUrl: result.imageUrl, model: result.model, referenceImage: refImg };
@@ -576,6 +588,11 @@ function t4StartPollingMulti(taskKeys) {
   }, 5000);
 }
 
+// ============== 关键帧控制函数 ==============
+
+function t4ChangeKfAspect(val) { AppState.t4KfAspectRatio = val; }
+function t4ToggleKfSubtitle(checked) { AppState.t4KfSubtitle = checked; }
+
 // ============== 导出 ==============
 
 window.renderTab4 = renderTab4;
@@ -597,3 +614,5 @@ window.t4ChangeLanguage = t4ChangeLanguage;
 window.t4GenOneKeyframe = t4GenOneKeyframe;
 window.t4GenAllKeyframes = t4GenAllKeyframes;
 window.t4UploadRef = t4UploadRef;
+window.t4ChangeKfAspect = t4ChangeKfAspect;
+window.t4ToggleKfSubtitle = t4ToggleKfSubtitle;

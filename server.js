@@ -825,12 +825,12 @@ app.post('/api/feishu/framework/create', async (req, res) => {
   } catch (e) { console.error('框架入库失败:', e); res.status(500).json({ error: e.message }); }
 });
 
-// === Image Gen (关键帧生成) ★ V3.6.0 ===
+// === Image Gen (关键帧生成) ★ V3.6.3 修复 ===
 const IMAGEGEN_MODELS = [
   { id: 'google/gemini-3-pro-image-preview', name: 'Nano Banana Pro', tier: '优质', price: '~$0.04-0.08/张', modalities: ['image', 'text'], supportsRef: true },
   { id: 'google/gemini-3.1-flash-image-preview', name: 'Nano Banana 2', tier: '性价比', price: '~$0.02/张', modalities: ['image', 'text'], supportsRef: true },
   { id: 'bytedance-seed/seedream-4.5', name: 'Seedream 4.5', tier: '廉价', price: '$0.04/张', modalities: ['image'], supportsRef: false },
-  { id: 'black-forest-labs/flux-2-klein', name: 'FLUX.2 Klein', tier: '最快', price: '$0.014/MP', modalities: ['image'], supportsRef: false }
+  { id: 'black-forest-labs/flux.2-klein-4b', name: 'FLUX.2 Klein', tier: '最快', price: '$0.014/MP', modalities: ['image'], supportsRef: false }
 ];
 
 app.get('/api/imagegen/models', (req, res) => {
@@ -856,9 +856,13 @@ app.post('/api/imagegen/generate', async (req, res) => {
     const body = {
       model: model.id,
       messages: [{ role: 'user', content: userContent.length === 1 ? prompt : userContent }],
-      modalities: model.modalities,
-      max_tokens: 4096
+      modalities: model.modalities
     };
+
+    // Gemini 图片模型需要 max_tokens 足够大来返回 base64，纯图片模型不需要
+    if (model.modalities.includes('text')) {
+      body.max_tokens = 10000;
+    }
 
     // 添加 image_config（aspect_ratio）
     if (aspectRatio) {
