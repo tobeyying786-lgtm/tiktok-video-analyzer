@@ -1,6 +1,6 @@
 /**
- * tab3-analysis.js — V3.5.4
- * 改动：框架标签可编辑+入库、去emoji、新框架入库传全部字段
+ * tab3-analysis.js — V3.6.3
+ * 改动：JSON解析加第五策略（正则提取blocks数组兜底）
  */
 
 function renderTab3(a, ss, shots) {
@@ -160,6 +160,22 @@ function renderRewriteBlocks(rw) {
           jsonStr = jsonStr.replace(/,\s*([}\]])/g, '$1'); // 去尾部逗号
           const p = JSON.parse(jsonStr);
           if (p.blocks) parsed = p;
+        }
+      } catch (e) {}
+    }
+
+    // 策略5: 正则直接提取 blocks 数组，绕过外层大括号parse失败
+    if (!parsed) {
+      try {
+        const m = raw.match(/"blocks"\s*:\s*(\[[\s\S]*\])\s*[,}]/);
+        if (m) {
+          let arrStr = m[1].replace(/,\s*([}\]])/g, '$1');
+          const blocks = JSON.parse(arrStr);
+          if (Array.isArray(blocks) && blocks.length > 0) {
+            const fw = (raw.match(/"framework"\s*:\s*"([^"]*)"/) || [])[1] || '';
+            const fo = (raw.match(/"formula"\s*:\s*"([^"]*)"/) || [])[1] || '';
+            parsed = { framework: fw, formula: fo, blocks };
+          }
         }
       } catch (e) {}
     }

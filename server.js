@@ -543,14 +543,27 @@ ${shots.map(s => `#${s.shot_number} [${s.shot_type}] ${s.time_start}s-${s.time_e
     if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
     const data = await r.json(), content = data.choices?.[0]?.message?.content || '';
     let rw;
-    // ★ V3.6.1: 加强 JSON 清理，多种策略
+    // ★ V3.6.3: 加强 JSON 清理，多种策略 + 正则兜底
     const cleanStrategies = [
       // 策略1: 去markdown代码块
       () => { const c = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) return JSON.parse(c.substring(s, e + 1)); return null; },
       // 策略2: 从 {" 开始
       () => { const s = content.indexOf('{"'), e = content.lastIndexOf('}'); if (s !== -1 && e > s) return JSON.parse(content.substring(s, e + 1)); return null; },
       // 策略3: 修复尾部逗号
-      () => { const c = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) { let j = c.substring(s, e + 1).replace(/,\s*([}\]])/g, '$1'); return JSON.parse(j); } return null; }
+      () => { const c = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) { let j = c.substring(s, e + 1).replace(/,\s*([}\]])/g, '$1'); return JSON.parse(j); } return null; },
+      // 策略4: 正则直接提取 blocks 数组，绕过外层大括号parse失败
+      () => {
+        const m = content.match(/"blocks"\s*:\s*(\[[\s\S]*\])\s*[,}]/);
+        if (!m) return null;
+        let arrStr = m[1];
+        arrStr = arrStr.replace(/,\s*([}\]])/g, '$1'); // 修复尾部逗号
+        const blocks = JSON.parse(arrStr);
+        if (!Array.isArray(blocks) || blocks.length === 0) return null;
+        // 尝试同时提取 framework / formula
+        const fw = (content.match(/"framework"\s*:\s*"([^"]*)"/) || [])[1] || '';
+        const fo = (content.match(/"formula"\s*:\s*"([^"]*)"/) || [])[1] || '';
+        return { framework: fw, formula: fo, blocks };
+      }
     ];
     for (const strategy of cleanStrategies) {
       try { const result = strategy(); if (result && result.blocks) { rw = result; break; } } catch (e) {}
