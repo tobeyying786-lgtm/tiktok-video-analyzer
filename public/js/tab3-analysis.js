@@ -218,8 +218,29 @@ async function doExpand() {
     const shots = AppState._analysisShots || [];
     const bd = AppState._structureBreakdown || [];
     bd.forEach(b => { (b.shots_included || []).forEach(sn => { const shot = shots.find(x => x.shot_number === sn); if (shot) shot._role = b.element; }); });
-    const result = await API.expand(shots, bd, rw.blocks, AppState._rwProductName || '', AppState._rwCategory || '');
-    if (result.raw_response) { status.innerHTML = '<div style="color:var(--red);padding:12px">AI 返回格式异常，请重试</div>'; btn.disabled = false; btn.textContent = '生成分镜脚本 -> Tab 4'; return; }
+    let result = await API.expand(shots, bd, rw.blocks, AppState._rwProductName || '', AppState._rwCategory || '');
+
+    // ★ V3.6.2: 前端多策略 JSON 补救（跟 renderRewriteBlocks 一致）
+    if (result.raw_response) {
+      let parsed = null;
+      const raw = result.raw_response;
+      // 策略1: 去markdown代码块
+      try { const c = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) { const p = JSON.parse(c.substring(s, e + 1)); if (p.shots) parsed = p; } } catch (e) {}
+      // 策略2: 从 {" 开始
+      if (!parsed) { try { const s = raw.indexOf('{"'), e = raw.lastIndexOf('}'); if (s !== -1 && e > s) { const p = JSON.parse(raw.substring(s, e + 1)); if (p.shots) parsed = p; } } catch (e) {} }
+      // 策略3: 修复尾部逗号
+      if (!parsed) { try { const c = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) { let j = c.substring(s, e + 1).replace(/,\s*([}\]])/g, '$1'); const p = JSON.parse(j); if (p.shots) parsed = p; } } catch (e) {} }
+      if (parsed) { result = parsed; }
+      else {
+        status.innerHTML = '<div style="background:var(--redBg);border:1px solid var(--redBd);border-radius:var(--r);padding:16px">' +
+          '<div style="font-size:14px;font-weight:700;color:#fca5a5;margin-bottom:8px">分镜脚本生成解析失败，请重试</div>' +
+          '<div style="font-size:12px;color:var(--text2);white-space:pre-wrap;max-height:150px;overflow-y:auto">' + esc(raw.substring(0, 400)) + '</div>' +
+          '<button class="btn-sm" style="margin-top:10px;padding:6px 16px" onclick="doExpand()">重新生成</button></div>';
+        btn.disabled = false; btn.textContent = '生成分镜脚本 -> Tab 4';
+        return;
+      }
+    }
+
     const expandData = {
       rewritten_structure: (result.shots || []).map(s => ({ ...s, element: s.role || '无', camera: s.camera || { shot_size: '', lighting: [], movement: '', composition: '', style: '' } })),
       framework: rw.framework || '', formula: rw.formula || ''
