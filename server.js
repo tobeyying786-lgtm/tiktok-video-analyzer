@@ -542,10 +542,20 @@ ${shots.map(s => `#${s.shot_number} [${s.shot_type}] ${s.time_start}s-${s.time_e
     });
     if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
     const data = await r.json(), content = data.choices?.[0]?.message?.content || '';
-    const cleaned = content.replace(/`{3,}[\w]*\s*/g, '').trim();
     let rw;
-    try { const s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}'); rw = (s !== -1 && e > s) ? JSON.parse(cleaned.substring(s, e + 1)) : { raw_response: content }; }
-    catch(e) { console.error('rewrite JSON解析失败:', e.message); rw = { raw_response: content }; }
+    // ★ V3.6.1: 加强 JSON 清理，多种策略
+    const cleanStrategies = [
+      // 策略1: 去markdown代码块
+      () => { const c = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) return JSON.parse(c.substring(s, e + 1)); return null; },
+      // 策略2: 从 {" 开始
+      () => { const s = content.indexOf('{"'), e = content.lastIndexOf('}'); if (s !== -1 && e > s) return JSON.parse(content.substring(s, e + 1)); return null; },
+      // 策略3: 修复尾部逗号
+      () => { const c = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) { let j = c.substring(s, e + 1).replace(/,\s*([}\]])/g, '$1'); return JSON.parse(j); } return null; }
+    ];
+    for (const strategy of cleanStrategies) {
+      try { const result = strategy(); if (result && result.blocks) { rw = result; break; } } catch (e) {}
+    }
+    if (!rw) { console.error('rewrite JSON解析失败，原始内容前300字:', content.substring(0, 300)); rw = { raw_response: content }; }
     res.json({ success: true, rewrite: rw });
   } catch (error) { console.error('改写失败:', error); res.status(500).json({ error: '改写失败: ' + error.message }); }
 });
@@ -596,10 +606,16 @@ ${rewriteBlocks.map(b => `[${b.element}]（镜头 ${(b.original_shots || []).joi
     });
     if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
     const data = await r.json(), content = data.choices?.[0]?.message?.content || '';
-    const cleaned = content.replace(/`{3,}[\w]*\s*/g, '').trim();
     let result;
-    try { const s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}'); result = (s !== -1 && e > s) ? JSON.parse(cleaned.substring(s, e + 1)) : { raw_response: content }; }
-    catch(e) { console.error('expand JSON解析失败:', e.message); result = { raw_response: content }; }
+    const cleanStrats = [
+      () => { const c = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) return JSON.parse(c.substring(s, e + 1)); return null; },
+      () => { const s = content.indexOf('{"'), e = content.lastIndexOf('}'); if (s !== -1 && e > s) return JSON.parse(content.substring(s, e + 1)); return null; },
+      () => { const c = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) { let j = c.substring(s, e + 1).replace(/,\s*([}\]])/g, '$1'); return JSON.parse(j); } return null; }
+    ];
+    for (const strat of cleanStrats) {
+      try { const r = strat(); if (r && r.shots) { result = r; break; } } catch (e) {}
+    }
+    if (!result) { console.error('expand JSON解析失败，前300字:', content.substring(0, 300)); result = { raw_response: content }; }
     res.json({ success: true, expand: result });
   } catch (error) { console.error('扩展失败:', error); res.status(500).json({ error: '扩展失败: ' + error.message }); }
 });

@@ -115,14 +115,68 @@ async function doRewrite() {
 
 function renderRewriteBlocks(rw) {
   const re = document.getElementById('rw-result');
+
+  // ★ V3.6.1: 加强 JSON 解析，多种清理策略
   if (rw.raw_response) {
+    let parsed = null;
+    const raw = rw.raw_response;
+
+    // 策略1: 去 markdown 代码块标记
     try {
-      const cleaned = rw.raw_response.replace(/`{3,}[\w]*\s*/g, '').trim();
-      const s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}');
-      if (s !== -1 && e > s) { const parsed = JSON.parse(cleaned.substring(s, e + 1)); if (parsed.blocks) rw = parsed; }
+      const c1 = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+      const s1 = c1.indexOf('{'), e1 = c1.lastIndexOf('}');
+      if (s1 !== -1 && e1 > s1) { const p = JSON.parse(c1.substring(s1, e1 + 1)); if (p.blocks) parsed = p; }
     } catch (e) {}
+
+    // 策略2: 找所有可能的JSON块，逐个尝试
+    if (!parsed) {
+      try {
+        const jsonBlocks = raw.match(/\{[\s\S]*?\}(?=\s*$|\s*```)/g) || [];
+        for (const block of jsonBlocks) {
+          try { const p = JSON.parse(block); if (p.blocks) { parsed = p; break; } } catch (e) {}
+        }
+      } catch (e) {}
+    }
+
+    // 策略3: 去掉所有非JSON前缀后缀文字
+    if (!parsed) {
+      try {
+        const s3 = raw.indexOf('{"');
+        const e3 = raw.lastIndexOf('}');
+        if (s3 !== -1 && e3 > s3) {
+          const p = JSON.parse(raw.substring(s3, e3 + 1));
+          if (p.blocks) parsed = p;
+        }
+      } catch (e) {}
+    }
+
+    // 策略4: 修复常见JSON错误（尾部多余逗号）
+    if (!parsed) {
+      try {
+        let c4 = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+        const s4 = c4.indexOf('{'), e4 = c4.lastIndexOf('}');
+        if (s4 !== -1 && e4 > s4) {
+          let jsonStr = c4.substring(s4, e4 + 1);
+          jsonStr = jsonStr.replace(/,\s*([}\]])/g, '$1'); // 去尾部逗号
+          const p = JSON.parse(jsonStr);
+          if (p.blocks) parsed = p;
+        }
+      } catch (e) {}
+    }
+
+    if (parsed) {
+      rw = parsed;
+    } else {
+      // 所有策略都失败，显示原文并提供重试按钮
+      re.innerHTML = '<div style="background:var(--redBg);border:1px solid var(--redBd);border-radius:var(--r);padding:16px;margin-top:16px">' +
+        '<div style="font-size:14px;font-weight:700;color:#fca5a5;margin-bottom:8px">仿写结果解析失败，请重试</div>' +
+        '<div style="font-size:13px;color:var(--text2);white-space:pre-wrap;line-height:1.8;max-height:200px;overflow-y:auto">' + esc(raw.substring(0, 500)) + '</div>' +
+        '<button class="btn-sm" style="margin-top:10px;padding:6px 16px" onclick="doRewrite()">重新生成</button>' +
+      '</div>';
+      return;
+    }
   }
-  if (rw.raw_response) { re.innerHTML = '<div style="background:var(--bg3);border-radius:var(--r);padding:16px;margin-top:16px;font-size:13px;color:var(--text2);white-space:pre-wrap;line-height:1.8">' + esc(rw.raw_response) + '</div>'; return; }
+
   AppState.lastRewrite = rw;
   AppState._rewriteBlocks = rw;
   AppState.t4Initialized = false;

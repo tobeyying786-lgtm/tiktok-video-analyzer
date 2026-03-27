@@ -94,6 +94,9 @@ function renderResult(data) {
   const fa = ov.product_first_appear_seconds;
   document.getElementById('tip-bar').innerHTML = fa ? '产品首现时间为' + fa + '秒，' + (fa > 5 ? '建议在5秒内展示产品' : '表现良好') : '';
   renderTab1(shots); renderTab2(shots); renderTab3(a, ss, shots);
+
+  // ★ V3.6.1: 分析完成后自动在 Tab 1 底部渲染入库面板
+  setTimeout(() => { saveToFeishu(); }, 200);
 }
 
 // ============== Tab 切换 ==============
@@ -202,7 +205,18 @@ function saveToFeishu() {
 }
 
 function renderSavePanel(suggestions) {
-  const panel = document.getElementById('save-panel');
+  // ★ V3.6.1: 渲染到 Tab 1 底部，不再用全局 save-panel
+  let panel = document.getElementById('t1-save-panel');
+  if (!panel) {
+    // 首次创建：在 Tab 1 内容区底部插入
+    panel = document.createElement('div');
+    panel.id = 't1-save-panel';
+    panel.style.marginTop = '24px';
+    panel.style.borderTop = '1px solid var(--border)';
+    panel.style.paddingTop = '24px';
+    const t1 = document.getElementById('t1');
+    if (t1) t1.appendChild(panel);
+  }
   const memo = AppState._analyzeMemo || '';
   const memoHtml = memo ? '<div style="background:var(--accentBg);border:1px solid rgba(58,176,158,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:14px;color:var(--accent2)">分析时的入库备注: ' + esc(memo) + '</div>' : '';
 
@@ -251,11 +265,8 @@ function renderSavePanel(suggestions) {
     '<div style="font-size:14px;color:var(--text3);margin-bottom:12px">以下素材库由 AI 分析建议。每条素材可直接编辑，可勾选/取消，可新增:</div>' +
     '<div id="save-lib-list">' + libRows + '</div>' +
     (missingLibs.length > 0 ? '<div class="save-add-row"><select class="t4-select" style="width:auto;min-width:200px" id="save-add-select">' + addOptions + '</select><button class="btn-sm" style="padding:6px 14px" onclick="saveAddLib()">添加库</button></div>' : '') +
-    '<div class="archive-actions"><button class="btn-go" style="flex:1" id="btn-save-confirm" onclick="saveConfirm()">确认入库（' + checkedCount + ' 个库）</button><button class="btn-sec" onclick="savePanelClose()">取消</button></div>' +
+    '<div class="archive-actions"><button class="btn-go" style="flex:1" id="btn-save-confirm" onclick="saveConfirm()">确认入库（' + checkedCount + ' 个库）</button></div>' +
     '<div id="save-status"></div></div>';
-
-  panel.style.display = 'block';
-  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function saveToggleLib(idx, checked) {
@@ -318,7 +329,7 @@ async function saveConfirm() {
   }
 }
 
-function savePanelClose() { document.getElementById('save-panel').style.display = 'none'; }
+function savePanelClose() { const p = document.getElementById('t1-save-panel'); if (p) p.innerHTML = ''; }
 
 window.showSel = showSel; window.startAnalysis = startAnalysis; window.switchTab = switchTab;
 window.saveToFeishu = saveToFeishu; window.saveToggleLib = saveToggleLib; window.saveUpdateItem = saveUpdateItem;
