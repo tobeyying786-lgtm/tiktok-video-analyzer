@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai'); // ★ V3.6.7: 新SDK用于图片生成
 const { v4: uuidv4 } = require('uuid');
 const { execSync } = require('child_process');
 
@@ -825,86 +826,128 @@ app.post('/api/feishu/framework/create', async (req, res) => {
   } catch (e) { console.error('框架入库失败:', e); res.status(500).json({ error: e.message }); }
 });
 
-// === Image Gen (关键帧生成) ★ V3.6.3 修复 ===
+// === Image Gen (关键帧生成) ★ V3.6.7: Nano Banana 走 Google 原生 API ===
 const IMAGEGEN_MODELS = [
-  { id: 'google/gemini-3-pro-image-preview', name: 'Nano Banana Pro', tier: '优质', price: '~$0.04-0.08/张', modalities: ['image', 'text'], supportsRef: true },
-  { id: 'google/gemini-3.1-flash-image-preview', name: 'Nano Banana 2', tier: '性价比', price: '~$0.02/张', modalities: ['image', 'text'], supportsRef: true },
-  { id: 'bytedance-seed/seedream-4.5', name: 'Seedream 4.5', tier: '廉价', price: '$0.04/张', modalities: ['image'], supportsRef: false },
-  { id: 'black-forest-labs/flux.2-klein-4b', name: 'FLUX.2 Klein', tier: '最快', price: '$0.014/MP', modalities: ['image'], supportsRef: false }
+  { id: 'gemini-3-pro-image-preview', name: 'Nano Banana Pro', tier: '优质', price: '~$0.02-0.04/张', apiType: 'google', supportsRef: true },
+  { id: 'gemini-3.1-flash-image-preview', name: 'Nano Banana 2', tier: '性价比', price: '~$0.01/张', apiType: 'google', supportsRef: true },
+  { id: 'bytedance-seed/seedream-4.5', name: 'Seedream 4.5', tier: '廉价', price: '$0.04/张', apiType: 'openrouter', modalities: ['image'], supportsRef: false },
+  { id: 'black-forest-labs/flux.2-klein-4b', name: 'FLUX.2 Klein', tier: '最快', price: '$0.014/MP', apiType: 'openrouter', modalities: ['image'], supportsRef: false }
 ];
 
 app.get('/api/imagegen/models', (req, res) => {
-  res.json({ success: true, models: IMAGEGEN_MODELS.map(m => ({ ...m, available: !!OPENROUTER_API_KEY })) });
+  res.json({ success: true, models: IMAGEGEN_MODELS.map(m => ({
+    ...m,
+    available: m.apiType === 'google' ? !!GEMINI_API_KEY : !!OPENROUTER_API_KEY
+  })) });
 });
+
+// Google 原生 SDK 图片生成
+async function generateWithGoogle(prompt, modelId, aspectRatio, referenceImages) {
+  const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
+  // 构建 contents：文字 + 参考图
+  const contents = [];
+  // 先放参考图
+  const refImgs = Array.isArray(referenceImages) ? referenceImages : [];
+  for (const img of refImgs) {
+    if (!img) continue;
+    // 解析 base64 data URL
+    const match = img.match(/^data:image\/(\w+);base64,(.+)$/);
+    if (match) {
+      contents.push({ inlineData: { mimeType: `image/${match[1]}`, data: match[2] } });
+    }
+  }
+  if (refImgs.length > 0) console.log('[ImageGen/Google] 注入参考图:', refImgs.length, '张');
+  // 再放文字 prompt
+  contents.push(prompt);
+
+  const config = {
+    responseModalities: ['TEXT', 'IMAGE'],
+  };
+  if (aspectRatio) {
+    config.imageConfig = { aspectRatio: aspectRatio };
+  }
+
+  const response = await ai.models.generateContent({
+    model: modelId,
+    contents: contents,
+    config: config
+  });
+
+  // 从 response 提取图片
+  let imageUrl = null;
+  if (response.candidates?.[0]?.content?.parts) {
+    for (const part of response.candidates[0].content.parts) {
+      if (part.inlineData?.data) {
+        const mimeType = part.inlineData.mimeType || 'image/png';
+        imageUrl = `data:${mimeType};base64,${part.inlineData.data}`;
+        break;
+      }
+    }
+  }
+  return imageUrl;
+}
+
+// OpenRouter 图片生成（Seedream/FLUX）
+async function generateWithOpenRouter(prompt, model, aspectRatio) {
+  const body = {
+    model: model.id,
+    messages: [{ role: 'user', content: prompt }],
+    modalities: model.modalities
+  };
+  if (aspectRatio) {
+    body.image_config = { aspect_ratio: aspectRatio };
+  }
+
+  const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'HTTP-Referer': 'https://tiktok-analyzer.zeabur.app',
+      'X-Title': 'TikTok Analyzer'
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!r.ok) {
+    const errText = await r.text();
+    throw new Error('图片生成失败: HTTP ' + r.status + ' ' + errText.substring(0, 100));
+  }
+
+  const data = await r.json();
+  const choice = data.choices?.[0]?.message;
+  let imageUrl = null;
+  if (choice?.images?.length > 0) {
+    imageUrl = choice.images[0].image_url?.url || choice.images[0].url || null;
+  }
+  if (!imageUrl && choice?.content) {
+    const b64Match = (typeof choice.content === 'string' ? choice.content : '').match(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/);
+    if (b64Match) imageUrl = b64Match[0];
+  }
+  return imageUrl;
+}
 
 app.post('/api/imagegen/generate', async (req, res) => {
   try {
-    if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'OPENROUTER_API_KEY 未配置' });
     const { prompt, modelId, aspectRatio, referenceImages } = req.body;
     if (!prompt) return res.status(400).json({ error: '缺少 prompt' });
 
     const model = IMAGEGEN_MODELS.find(m => m.id === modelId) || IMAGEGEN_MODELS[1];
+    console.log('[ImageGen] 模型:', model.id, '路径:', model.apiType, '比例:', aspectRatio || '默认');
 
-    // 构建 messages — 支持多张参考图
-    const userContent = [];
-    const refImgs = Array.isArray(referenceImages) ? referenceImages : (referenceImages ? [referenceImages] : []);
-    if (refImgs.length > 0 && model.supportsRef) {
-      for (const img of refImgs) {
-        if (img) userContent.push({ type: 'image_url', image_url: { url: img } });
-      }
-      console.log('[ImageGen] 注入参考图:', refImgs.length, '张');
-    }
-    userContent.push({ type: 'text', text: prompt });
-
-    const body = {
-      model: model.id,
-      messages: [{ role: 'user', content: userContent.length === 1 ? prompt : userContent }],
-      modalities: model.modalities
-    };
-
-    if (model.modalities.includes('text')) {
-      body.max_tokens = 10000;
-    }
-
-    if (aspectRatio) {
-      body.image_config = { aspect_ratio: aspectRatio };
-    }
-
-    console.log('[ImageGen] 模型:', model.id, '比例:', aspectRatio || '默认');
-
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-        'HTTP-Referer': 'https://tiktok-analyzer.zeabur.app',
-        'X-Title': 'TikTok Analyzer'
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!r.ok) {
-      const errText = await r.text();
-      console.error('[ImageGen] API错误:', r.status, errText.substring(0, 200));
-      throw new Error('图片生成失败: HTTP ' + r.status);
-    }
-
-    const data = await r.json();
-    const choice = data.choices?.[0]?.message;
-
-    // 提取图片 — OpenRouter 返回格式：choice.message.images[].image_url.url (base64)
     let imageUrl = null;
-    if (choice?.images && choice.images.length > 0) {
-      imageUrl = choice.images[0].image_url?.url || choice.images[0].url || null;
-    }
-    // 某些模型可能直接在 content 里返回 base64
-    if (!imageUrl && choice?.content) {
-      const b64Match = (typeof choice.content === 'string' ? choice.content : '').match(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/);
-      if (b64Match) imageUrl = b64Match[0];
+
+    if (model.apiType === 'google') {
+      if (!GEMINI_API_KEY) return res.status(500).json({ error: 'GEMINI_API_KEY 未配置' });
+      const refImgs = (Array.isArray(referenceImages) ? referenceImages : []).filter(Boolean);
+      imageUrl = await generateWithGoogle(prompt, model.id, aspectRatio, refImgs);
+    } else {
+      if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'OPENROUTER_API_KEY 未配置' });
+      imageUrl = await generateWithOpenRouter(prompt, model, aspectRatio);
     }
 
     if (!imageUrl) {
-      console.error('[ImageGen] 未找到图片:', JSON.stringify(data).substring(0, 500));
       return res.json({ success: false, error: '模型未返回图片，请重试或换一个模型' });
     }
 
