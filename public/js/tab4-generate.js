@@ -61,9 +61,11 @@ function renderTab4() {
 
 function t4RenderGlobalSettings() {
   const s = AppState.t4Settings;
-  const imgPreview = s.productImage
-    ? '<div class="t4-img-preview"><img src="' + s.productImage + '"><span onclick="t4ClearProductImage()" class="t4-img-x">x</span></div>'
-    : '';
+  // 多图参考预览
+  const refImages = s.productImages || [];
+  const imgPreviews = refImages.map((img, i) =>
+    '<div style="position:relative;display:inline-block;margin:0 4px 4px 0"><img src="' + img + '" style="width:48px;height:48px;object-fit:cover;border-radius:6px;border:1px solid var(--border)"><span onclick="t4RemoveProductImage(' + i + ')" style="position:absolute;top:-4px;right:-4px;background:var(--red);color:#fff;width:16px;height:16px;border-radius:50%;font-size:11px;display:flex;align-items:center;justify-content:center;cursor:pointer">x</span></div>'
+  ).join('');
 
   const templates = PLATFORM_TEMPLATES[s.platform] || ['tiktok_916'];
   const templateOpts = templates.map(tid => {
@@ -73,9 +75,10 @@ function t4RenderGlobalSettings() {
 
   return '<div class="t4-global-bar">' +
     '<div class="t4-global-row">' +
-      '<div class="t4-global-item"><label>产品白底图</label><div class="t4-img-upload">' + imgPreview +
-        '<label class="btn-sm" style="padding:6px 12px;cursor:pointer">' + (s.productImage ? '替换' : '上传图片') +
-        '<input type="file" accept="image/*" style="display:none" onchange="t4UploadProductImage(this)"></label></div></div>' +
+      '<div class="t4-global-item"><label>产品参考图 <span style="font-size:11px;color:var(--text3);font-weight:400">(' + refImages.length + '/5)</span></label><div class="t4-img-upload">' +
+        imgPreviews +
+        (refImages.length < 5 ? '<label class="btn-sm" style="padding:6px 12px;cursor:pointer">+ 添加<input type="file" accept="image/*" multiple style="display:none" onchange="t4UploadProductImages(this)"></label>' : '') +
+      '</div></div>' +
       '<div class="t4-global-item"><label>发布平台</label><select class="t4-select t4-sel-sm" onchange="t4ChangePlatform(this.value)">' +
         '<option value="tiktok"' + (s.platform === 'tiktok' ? ' selected' : '') + '>TikTok</option>' +
         '<option value="instagram"' + (s.platform === 'instagram' ? ' selected' : '') + '>Instagram</option>' +
@@ -92,13 +95,31 @@ function t4RenderGlobalSettings() {
   '</div>';
 }
 
-function t4UploadProductImage(input) {
-  const file = input.files[0]; if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (e) => { AppState.t4Settings.productImage = e.target.result; AppState.t4Settings.productImageName = file.name; t4RenderFull(); };
-  reader.readAsDataURL(file);
+function t4UploadProductImages(input) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  const s = AppState.t4Settings;
+  if (!s.productImages) s.productImages = [];
+  const remaining = 5 - s.productImages.length;
+  const toProcess = files.slice(0, remaining);
+  let loaded = 0;
+  toProcess.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      s.productImages.push(e.target.result);
+      loaded++;
+      if (loaded === toProcess.length) t4RenderFull();
+    };
+    reader.readAsDataURL(file);
+  });
 }
-function t4ClearProductImage() { AppState.t4Settings.productImage = null; AppState.t4Settings.productImageName = null; t4RenderFull(); }
+function t4RemoveProductImage(idx) {
+  const s = AppState.t4Settings;
+  if (s.productImages) { s.productImages.splice(idx, 1); t4RenderFull(); }
+}
+// 兼容旧版
+function t4UploadProductImage(input) { t4UploadProductImages(input); }
+function t4ClearProductImage() { AppState.t4Settings.productImages = []; t4RenderFull(); }
 function t4ChangePlatform(val) { AppState.t4Settings.platform = val; const t = PLATFORM_TEMPLATES[val] || ['tiktok_916']; AppState.t4Settings.layoutTemplate = t[0]; t4RenderFull(); }
 function t4ChangeLayout(val) { AppState.t4Settings.layoutTemplate = val; }
 function t4ChangeLanguage(val) { AppState.t4Settings.language = val; }
@@ -270,23 +291,27 @@ async function t4LoadImageModels() {
 }
 
 function t4GetImagePrompt(shot, index) {
-  const s = AppState.t4Settings;
   const cam = shot.camera || {};
   const includeSubtitle = AppState.t4KfSubtitle !== false;
-  let p = 'TikTok short video keyframe. Shot #' + (index + 1) + ', role: ' + (shot.role || shot.element || '无') + '.\n';
-  p += 'Scene: ' + (shot.scene_description_cn || '') + '\n';
-  if (includeSubtitle && shot.voiceover_cn) p += 'Voiceover subtitle: ' + shot.voiceover_cn + '\n';
-  if (includeSubtitle && shot.text_overlay) p += 'Text overlay: ' + shot.text_overlay + '\n';
-  if (shot.shooting_notes) p += 'Camera notes: ' + shot.shooting_notes + '\n';
+
+  // ★ V3.6.6: 只保留画面内容描述，去掉元数据（Shot编号、role标签）
+  let p = (shot.scene_description_cn || '') + '\n';
+  if (shot.shooting_notes) p += 'Camera: ' + shot.shooting_notes + '\n';
   if (cam.shot_size) p += 'Shot size: ' + cam.shot_size + '\n';
   if (cam.lighting && cam.lighting.length) p += 'Lighting: ' + cam.lighting.join(', ') + '\n';
   if (cam.style) p += 'Style: ' + cam.style + '\n';
-  const kfAspect = AppState.t4KfAspectRatio || '9:16';
-  p += 'Aspect ratio: ' + kfAspect;
+
   if (includeSubtitle && (shot.voiceover_cn || shot.text_overlay)) {
-    p += '\nRender the subtitle text visually on the image in the style of a TikTok video.';
+    if (shot.voiceover_cn) p += 'Subtitle text on screen: ' + shot.voiceover_cn + '\n';
+    if (shot.text_overlay) p += 'Text overlay: ' + shot.text_overlay + '\n';
   }
-  return p;
+
+  // 防止多余文字
+  if (!includeSubtitle) {
+    p += 'Do not render any text, watermark, or label on the image.\n';
+  }
+
+  return p.trim();
 }
 
 async function t4GenOneKeyframe(idx) {
@@ -300,16 +325,20 @@ async function t4GenOneKeyframe(idx) {
   const shot = shots[idx];
   const prompt = t4GetImagePrompt(shot, idx);
   const ratio = AppState.t4KfAspectRatio || '9:16';
-  const refImg = t4KeyframeData[idx]?.referenceImage || null;
 
-  t4KeyframeData[idx] = { status: 'loading', imageUrl: null, model: '', referenceImage: refImg };
+  // ★ V3.6.6: 合并产品参考图 + 单镜头参考图
+  const productImgs = AppState.t4Settings.productImages || [];
+  const shotRef = t4KeyframeData[idx]?.referenceImage || null;
+  const allRefs = [...productImgs, ...(shotRef ? [shotRef] : [])];
+
+  t4KeyframeData[idx] = { status: 'loading', imageUrl: null, model: '', referenceImage: shotRef };
   t4RenderShotTable_Update();
 
   try {
-    const result = await API.generateKeyframe(prompt, modelId, ratio, refImg);
-    t4KeyframeData[idx] = { status: 'done', imageUrl: result.imageUrl, model: result.model, referenceImage: refImg };
+    const result = await API.generateKeyframe(prompt, modelId, ratio, allRefs.length > 0 ? allRefs : null);
+    t4KeyframeData[idx] = { status: 'done', imageUrl: result.imageUrl, model: result.model, referenceImage: shotRef };
   } catch (e) {
-    t4KeyframeData[idx] = { status: 'error', error: e.message, referenceImage: refImg };
+    t4KeyframeData[idx] = { status: 'error', error: e.message, referenceImage: shotRef };
   }
   t4RenderShotTable_Update();
 }
@@ -323,6 +352,7 @@ async function t4GenAllKeyframes() {
   if (!modelId) { alert('请选择关键帧生成模型'); return; }
 
   const statusEl = document.getElementById('t4-kf-status');
+  const productImgs = AppState.t4Settings.productImages || [];
   let done = 0;
 
   for (let i = 0; i < shots.length; i++) {
@@ -333,9 +363,10 @@ async function t4GenAllKeyframes() {
     try {
       const prompt = t4GetImagePrompt(shots[i], i);
       const ratio = AppState.t4KfAspectRatio || '9:16';
-      const refImg = t4KeyframeData[i]?.referenceImage || null;
-      const result = await API.generateKeyframe(prompt, modelId, ratio, refImg);
-      t4KeyframeData[i] = { status: 'done', imageUrl: result.imageUrl, model: result.model, referenceImage: refImg };
+      const shotRef = t4KeyframeData[i]?.referenceImage || null;
+      const allRefs = [...productImgs, ...(shotRef ? [shotRef] : [])];
+      const result = await API.generateKeyframe(prompt, modelId, ratio, allRefs.length > 0 ? allRefs : null);
+      t4KeyframeData[i] = { status: 'done', imageUrl: result.imageUrl, model: result.model, referenceImage: shotRef };
     } catch (e) {
       t4KeyframeData[i] = { status: 'error', error: e.message };
     }
@@ -607,6 +638,8 @@ window.t4PlatformChange = t4PlatformChange;
 window.t4SelectBgm = t4SelectBgm;
 window.t4Generate = t4Generate;
 window.t4UploadProductImage = t4UploadProductImage;
+window.t4UploadProductImages = t4UploadProductImages;
+window.t4RemoveProductImage = t4RemoveProductImage;
 window.t4ClearProductImage = t4ClearProductImage;
 window.t4ChangePlatform = t4ChangePlatform;
 window.t4ChangeLayout = t4ChangeLayout;

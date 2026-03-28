@@ -543,27 +543,14 @@ ${shots.map(s => `#${s.shot_number} [${s.shot_type}] ${s.time_start}s-${s.time_e
     if (!r.ok) throw new Error(`OpenRouter ${r.status}`);
     const data = await r.json(), content = data.choices?.[0]?.message?.content || '';
     let rw;
-    // ★ V3.6.3: 加强 JSON 清理，多种策略 + 正则兜底
+    // ★ V3.6.1: 加强 JSON 清理，多种策略
     const cleanStrategies = [
       // 策略1: 去markdown代码块
       () => { const c = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) return JSON.parse(c.substring(s, e + 1)); return null; },
       // 策略2: 从 {" 开始
       () => { const s = content.indexOf('{"'), e = content.lastIndexOf('}'); if (s !== -1 && e > s) return JSON.parse(content.substring(s, e + 1)); return null; },
       // 策略3: 修复尾部逗号
-      () => { const c = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) { let j = c.substring(s, e + 1).replace(/,\s*([}\]])/g, '$1'); return JSON.parse(j); } return null; },
-      // 策略4: 正则直接提取 blocks 数组，绕过外层大括号parse失败
-      () => {
-        const m = content.match(/"blocks"\s*:\s*(\[[\s\S]*\])\s*[,}]/);
-        if (!m) return null;
-        let arrStr = m[1];
-        arrStr = arrStr.replace(/,\s*([}\]])/g, '$1'); // 修复尾部逗号
-        const blocks = JSON.parse(arrStr);
-        if (!Array.isArray(blocks) || blocks.length === 0) return null;
-        // 尝试同时提取 framework / formula
-        const fw = (content.match(/"framework"\s*:\s*"([^"]*)"/) || [])[1] || '';
-        const fo = (content.match(/"formula"\s*:\s*"([^"]*)"/) || [])[1] || '';
-        return { framework: fw, formula: fo, blocks };
-      }
+      () => { const c = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim(); const s = c.indexOf('{'), e = c.lastIndexOf('}'); if (s !== -1 && e > s) { let j = c.substring(s, e + 1).replace(/,\s*([}\]])/g, '$1'); return JSON.parse(j); } return null; }
     ];
     for (const strategy of cleanStrategies) {
       try { const result = strategy(); if (result && result.blocks) { rw = result; break; } } catch (e) {}
@@ -853,16 +840,19 @@ app.get('/api/imagegen/models', (req, res) => {
 app.post('/api/imagegen/generate', async (req, res) => {
   try {
     if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'OPENROUTER_API_KEY 未配置' });
-    const { prompt, modelId, aspectRatio, referenceImage } = req.body;
+    const { prompt, modelId, aspectRatio, referenceImages } = req.body;
     if (!prompt) return res.status(400).json({ error: '缺少 prompt' });
 
-    const model = IMAGEGEN_MODELS.find(m => m.id === modelId) || IMAGEGEN_MODELS[1]; // 默认 Nano Banana 2
+    const model = IMAGEGEN_MODELS.find(m => m.id === modelId) || IMAGEGEN_MODELS[1];
 
-    // 构建 messages
+    // 构建 messages — 支持多张参考图
     const userContent = [];
-    // 如果有参考图，先放图片
-    if (referenceImage && model.supportsRef) {
-      userContent.push({ type: 'image_url', image_url: { url: referenceImage } });
+    const refImgs = Array.isArray(referenceImages) ? referenceImages : (referenceImages ? [referenceImages] : []);
+    if (refImgs.length > 0 && model.supportsRef) {
+      for (const img of refImgs) {
+        if (img) userContent.push({ type: 'image_url', image_url: { url: img } });
+      }
+      console.log('[ImageGen] 注入参考图:', refImgs.length, '张');
     }
     userContent.push({ type: 'text', text: prompt });
 
@@ -872,12 +862,10 @@ app.post('/api/imagegen/generate', async (req, res) => {
       modalities: model.modalities
     };
 
-    // Gemini 图片模型需要 max_tokens 足够大来返回 base64，纯图片模型不需要
     if (model.modalities.includes('text')) {
       body.max_tokens = 10000;
     }
 
-    // 添加 image_config（aspect_ratio）
     if (aspectRatio) {
       body.image_config = { aspect_ratio: aspectRatio };
     }

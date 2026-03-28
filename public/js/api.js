@@ -89,11 +89,11 @@ const API = {
     return data.models;
   },
 
-  async generateKeyframe(prompt, modelId, aspectRatio, referenceImage) {
+  async generateKeyframe(prompt, modelId, aspectRatio, referenceImages) {
     const resp = await fetch('/api/imagegen/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, modelId, aspectRatio, referenceImage: referenceImage || null })
+      body: JSON.stringify({ prompt, modelId, aspectRatio, referenceImages: referenceImages || [] })
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || '图片生成失败');
