@@ -104,11 +104,12 @@
 <div id="page-result">
   <div class="metrics" id="metrics"></div>
   <div class="tip-bar" id="tip-bar"></div>
-  <div class="tabs"><div class="tab active" data-tab="t1" onclick="switchTab('t1',this)">📷 镜头截图</div><div class="tab" data-tab="t2" onclick="switchTab('t2',this)">📋 分镜脚本</div><div class="tab" data-tab="t3" onclick="switchTab('t3',this)">📊 脚本结构分析</div><div class="tab" data-tab="t4" onclick="switchTab('t4',this)">✨ AI 视频生成</div><div class="tab" style="color:var(--text3);cursor:default;opacity:.5">📥 导出报告</div></div>
+  <div class="tabs"><div class="tab active" data-tab="t1" onclick="switchTab('t1',this)">📷 镜头截图</div><div class="tab" data-tab="t2" onclick="switchTab('t2',this)">📋 分镜脚本</div><div class="tab" data-tab="t3" onclick="switchTab('t3',this)">📦 商品档案</div><div class="tab" data-tab="t4" onclick="switchTab('t4',this)">📊 仿写分析</div><div class="tab" data-tab="t5" onclick="switchTab('t5',this)">✨ 关键帧+视频</div><div class="tab" style="color:var(--text3);cursor:default;opacity:.5">📋 导出报告</div></div>
   <div class="tab-panel active" id="t1"></div>
   <div class="tab-panel" id="t2"></div>
   <div class="tab-panel" id="t3"></div>
   <div class="tab-panel" id="t4"></div>
+      <div class="tab-panel" id="t5"></div>
   <div id="save-panel" style="display:none"></div>
   <div class="action-bar">
     <button class="btn-sec" id="btn-feishu" onclick="saveToFeishu()">📝 写入飞书多维表格</button>
@@ -123,8 +124,9 @@
 <script src="js/api.js"></script>
 <script src="js/tab1-shots.js"></script>
 <script src="js/tab2-script.js"></script>
-<script src="js/tab3-analysis.js"></script>
-<script src="js/tab4-generate.js"></script>
+<script src="js/tab3-product.js"></script>
+<script src="js/tab4-rewrite.js"></script>
+<script src="js/tab5-generate.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

@@ -486,16 +486,28 @@ ${frameworkRules}
   }
 });
 
-// === API: Rewrite ===
+// === API: Rewrite ★ V3.7.0 重构 ===
 app.post('/api/rewrite', async (req, res) => {
   try {
-    const { analysis, newCategory, productName, coreSellingPoints } = req.body;
+    const { analysis, newCategory, productName, coreSellingPoints, productProfile, creativeDirection } = req.body;
     if (!OPENROUTER_API_KEY) return res.status(500).json({ error: 'OPENROUTER_API_KEY 未配置' });
-    if (!analysis || !newCategory || !productName) return res.status(400).json({ error: '缺少参数' });
+    if (!analysis || !productName) return res.status(400).json({ error: '缺少参数' });
     const sb = analysis.script_structure?.structure_breakdown || [];
     const shots = analysis.shots || [];
     const framework = analysis.script_structure?.framework || '未知';
     const formula = analysis.script_structure?.formula || '未知';
+
+    // 产品档案注入
+    const profileSection = productProfile ? `
+## 产品档案（AI 已提取的结构化信息，务必参考）
+${JSON.stringify(productProfile, null, 2)}
+` : '';
+
+    // 创作方向注入
+    const directionSection = creativeDirection ? `
+## 本次创作方向
+${creativeDirection}
+` : '';
 
     const prompt = `你是TikTok带货短视频编导。基于以下爆款视频的结构分析，为新产品做板块级仿写。
 
@@ -509,19 +521,28 @@ ${sb.map(b => `[${b.element}] ${b.time_range || ''}（${(b.shots_included || [])
 ${shots.map(s => `#${s.shot_number} [${s.shot_type}] ${s.time_start}s-${s.time_end}s: ${s.scene_description || ''}`).join('\n')}
 
 ## 新产品信息
-品类：${newCategory}
+品类：${newCategory || productProfile?.category || ''}
 产品名称：${productName}
 核心卖点：${coreSellingPoints || '无'}
-
+${profileSection}${directionSection}
 ## 任务
-请按原视频的停病药信买板块结构，为新产品写出每个板块的仿写方向。
+请按原视频的停病药信买板块结构，为新产品写出每个板块的仿写分析。
+
+每个板块必须输出三个维度的对比（原视频 vs 仿写）：
+- 场景：发生了什么事
+- 画面：怎么拍/怎么呈现（镜头语言、运镜方式、特效手法）
+- 心理：观众感受到什么（情绪变化）
+
+每个维度标注复用关系：
+- reused：跟原视频策略一致（核心策略，不要轻易改）
+- adjusted：策略相同但细节因品类不同做了适配
+- new_addition：原视频没有的新元素
 
 要求：
 1. 保持原视频的板块顺序和板块数量
-2. 每个板块只写概要方向（2-4句话），不要写逐镜头脚本
-3. 概要方向要具体到画面
+2. 如果有产品档案，仿写内容必须符合产品的真实结构、使用方式和外观
+3. 如果有 VOC 洞察（voc_insights），"病"的痛点优先使用 top_pains，"药"的卖点优先对应 purchase_drivers
 4. 全部用中文，不用emoji
-5. 标注每个板块对应原视频的哪几个镜头编号
 
 输出严格JSON：
 {
@@ -531,8 +552,21 @@ ${shots.map(s => `#${s.shot_number} [${s.shot_type}] ${s.time_start}s-${s.time_e
     {
       "element": "停",
       "original_shots": [1, 2],
-      "original_description": "原视频这个板块做了什么",
-      "rewrite_direction": "新产品仿写方向（2-4句话）"
+      "original": {
+        "scene": "原视频这个板块的场景描述",
+        "visual": "原视频的画面呈现手法",
+        "psychology": "原视频触发的心理反应"
+      },
+      "rewrite": {
+        "scene": "仿写的场景描述",
+        "visual": "仿写的画面呈现手法",
+        "psychology": "仿写触发的心理反应"
+      },
+      "tags": {
+        "scene": "reused 或 adjusted 或 new_addition",
+        "visual": "reused 或 adjusted 或 new_addition",
+        "psychology": "reused 或 adjusted 或 new_addition"
+      }
     }
   ]
 }`;
@@ -824,6 +858,144 @@ app.post('/api/feishu/framework/create', async (req, res) => {
     frameworkCache = { data: null, expires: 0 };
     res.json({ success: true, record });
   } catch (e) { console.error('框架入库失败:', e); res.status(500).json({ error: e.message }); }
+});
+
+// === API: 产品特征提取 ★ V3.7.0 ===
+app.post('/api/product/analyze', async (req, res) => {
+  try {
+    if (!GEMINI_API_KEY) return res.status(500).json({ error: 'GEMINI_API_KEY 未配置' });
+    const { productName, category, sellingPoints, description, vocText, referenceImages } = req.body;
+    if (!productName) return res.status(400).json({ error: '缺少产品名称' });
+
+    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+    const contents = [];
+
+    // 注入参考图
+    const refImgs = Array.isArray(referenceImages) ? referenceImages : [];
+    for (const img of refImgs) {
+      if (!img) continue;
+      const match = img.match(/^data:image\/(\w+);base64,(.+)$/);
+      if (match) contents.push({ inlineData: { mimeType: `image/${match[1]}`, data: match[2] } });
+    }
+    if (refImgs.length > 0) console.log('[ProductAnalyze] 注入参考图:', refImgs.length, '张');
+
+    const prompt = `你是一个产品分析专家。请仔细观察参考图片，结合以下产品信息，输出一份结构化的产品档案。
+
+产品名称：${productName}
+品类：${category || ''}
+核心卖点：${sellingPoints || ''}
+产品描述：${description || ''}
+${vocText ? '消费者洞察（VOC）：' + vocText : ''}
+
+请输出严格JSON，不要有其他文字：
+{
+  "product_name": "产品名称",
+  "category": "品类",
+  "appearance": "详细外观描述（颜色、形状、材质、各部件）",
+  "dimensions": "尺寸和比例参考（跟人手/常见物品的比例关系）",
+  "color_scheme": "配色方案",
+  "materials": "材质描述",
+  "key_details": "关键细节（logo位置、按钮、接口、刀片等）",
+  "usage_posture": "正确的使用方式和姿态（非常重要，描述清楚怎么拿、怎么用、哪个方向朝上）",
+  "core_selling_points": ["卖点1", "卖点2"],
+  "target_audience": "目标用户群",
+  "brand_style": "适合的视觉风格",
+  "negative_constraints": "生成图片时不要出现的错误（如产品倒置、比例失调等）"${vocText ? `,
+  "voc_insights": {
+    "top_pains": ["消费者最常抱怨的问题"],
+    "top_praises": ["消费者最满意的点"],
+    "common_scenarios": ["最常见的使用场景"],
+    "purchase_drivers": ["影响购买决策的关键因素"],
+    "competitor_complaints": ["竞品常见的投诉"]
+  }` : ''}
+}`;
+
+    contents.push(prompt);
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: contents,
+      config: { responseMimeType: 'application/json' }
+    });
+
+    const text = response.text || '';
+    let profile;
+    try {
+      profile = JSON.parse(text);
+    } catch (e) {
+      // 清理后重试
+      const m = text.match(/\{[\s\S]*\}/);
+      profile = m ? JSON.parse(m[0]) : null;
+    }
+
+    if (!profile) return res.status(500).json({ error: '产品分析失败，请重试' });
+    console.log('[ProductAnalyze] 成功:', profile.product_name);
+    res.json({ success: true, profile });
+  } catch (e) {
+    console.error('产品分析失败:', e);
+    res.status(500).json({ error: '产品分析失败: ' + e.message });
+  }
+});
+
+// === API: 生图 Prompt 工程层 ★ V3.7.0 ===
+app.post('/api/imagegen/prompt', async (req, res) => {
+  try {
+    if (!GEMINI_API_KEY) return res.status(500).json({ error: 'GEMINI_API_KEY 未配置' });
+    const { shotDescription, shootingNotes, voiceover, productProfile, aspectRatio, includeSubtitle } = req.body;
+    if (!shotDescription) return res.status(400).json({ error: '缺少镜头描述' });
+
+    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
+    const prompt = `你是一个专业的 AI 图片生成 prompt 工程师。请根据以下分镜信息和产品档案，生成一个精确的图片生成 prompt。
+
+## 分镜信息
+画面描述：${shotDescription}
+${shootingNotes ? '拍摄建议：' + shootingNotes : ''}
+${includeSubtitle && voiceover ? '字幕文字：' + voiceover : ''}
+画面比例：${aspectRatio || '9:16'}
+
+## 产品档案
+${productProfile ? JSON.stringify(productProfile, null, 2) : '无产品档案'}
+
+## 要求
+1. 产品外观必须严格符合档案中的 appearance、color_scheme、materials 描述
+2. 产品使用姿态必须符合 usage_posture 描述
+3. 遵守 negative_constraints 中的约束
+4. 不要在画面上渲染任何文字、水印、Logo（除非 includeSubtitle 明确要求字幕）
+
+输出严格JSON：
+{
+  "subject": "主体描述（产品在画面中的位置、姿态、使用方式）",
+  "person": "人物描述（性别、年龄、动作、表情、穿着），没有人物则填空",
+  "scene": "场景环境描述",
+  "composition": "构图指令（景别、角度、焦点）",
+  "lighting": "光线描述",
+  "style": "视觉风格",
+  "negative": "不要出现的元素",
+  "final_prompt": "合并以上所有信息的完整英文生图prompt（一段话，直接可用）"
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: 'application/json' }
+    });
+
+    const text = response.text || '';
+    let promptData;
+    try {
+      promptData = JSON.parse(text);
+    } catch (e) {
+      const m = text.match(/\{[\s\S]*\}/);
+      promptData = m ? JSON.parse(m[0]) : null;
+    }
+
+    if (!promptData) return res.status(500).json({ error: 'Prompt 生成失败，请重试' });
+    res.json({ success: true, promptData });
+  } catch (e) {
+    console.error('Prompt工程失败:', e);
+    res.status(500).json({ error: 'Prompt 生成失败: ' + e.message });
+  }
 });
 
 // === Image Gen (关键帧生成) ★ V3.6.7: Nano Banana 走 Google 原生 API ===

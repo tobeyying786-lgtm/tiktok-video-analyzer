@@ -42,8 +42,8 @@ const API = {
     } catch (e) { onError(e); }
   },
 
-  async rewrite(analysis, newCategory, productName, coreSellingPoints) {
-    const resp = await fetch('/api/rewrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ analysis, newCategory, productName, coreSellingPoints }) });
+  async rewrite(analysis, newCategory, productName, coreSellingPoints, productProfile, creativeDirection) {
+    const resp = await fetch('/api/rewrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ analysis, newCategory, productName, coreSellingPoints, productProfile, creativeDirection }) });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || '改写失败');
     return data.rewrite;
@@ -98,6 +98,30 @@ const API = {
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || '图片生成失败');
     return data;
+  },
+
+  // V3.7.0: 产品特征提取
+  async analyzeProduct(productName, category, sellingPoints, description, vocText, referenceImages) {
+    const resp = await fetch('/api/product/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productName, category, sellingPoints, description, vocText, referenceImages: referenceImages || [] })
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || '产品分析失败');
+    return data.profile;
+  },
+
+  // V3.7.0: 生图 prompt 工程层
+  async generateImagePrompt(shotDescription, shootingNotes, voiceover, productProfile, aspectRatio, includeSubtitle) {
+    const resp = await fetch('/api/imagegen/prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shotDescription, shootingNotes, voiceover, productProfile, aspectRatio, includeSubtitle })
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Prompt生成失败');
+    return data.promptData;
   },
 
   async healthCheck() { return await (await fetch('/api/health')).json(); },

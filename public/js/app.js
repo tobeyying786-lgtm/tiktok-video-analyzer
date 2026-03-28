@@ -99,13 +99,15 @@ function renderResult(data) {
   setTimeout(() => { saveToFeishu(); }, 200);
 }
 
-// ============== Tab 切换 ==============
+// ============== Tab 切换 ★ V3.7.0 更新为 6 Tab ==============
 function switchTab(id, el) {
   if (el.style.opacity === '0.5') return;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   el.classList.add('active'); document.getElementById(id).classList.add('active');
-  if (id === 't4') renderTab4();
+  if (id === 't3') renderTab3Product();
+  if (id === 't4') renderTab4Rewrite();
+  if (id === 't5') renderTab5();
 }
 
 // ============== 飞书入库 V3.5.4 ==============
