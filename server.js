@@ -183,7 +183,7 @@ app.post('/api/analyze', upload.single('video'), async (req, res) => {
       : '经典痛点型/效果前置型/对比碾压型/多场景轰炸型/开箱种草型/好奇悬念型/社交证明型/科普权威型/真实体验型/剧情反转型';
 
     const videoBase64 = fs.readFileSync(videoPath).toString('base64');
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const ffprobeHint = realDuration
       ? `\n## ffmpeg 预分析数据（真实值，请严格遵守）\n- 视频真实总时长：${realDuration.toFixed(2)} 秒（你输出的 total_duration_seconds 必须等于此值）\n- 视频分辨率：${ffprobeData.resolution || '未知'}\n- 帧率：${ffprobeData.fps || '未知'} fps\n- ffmpeg 检测到的场景切换时间点：${sceneChanges.length > 0 ? sceneChanges.join('s, ') + 's' : '未检测到明显场景切换'}\n`
@@ -913,7 +913,7 @@ ${vocText ? '消费者洞察（VOC）：' + vocText : ''}
     contents.push(prompt);
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: contents,
       config: { responseMimeType: 'application/json' }
     });
@@ -976,7 +976,7 @@ ${productProfile ? JSON.stringify(productProfile, null, 2) : '无产品档案'}
 }`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: { responseMimeType: 'application/json' }
     });
